@@ -3,9 +3,12 @@
 
 #include "EditorApp.h"
 
+#include "Core/IO/Virtual/Providers/LooseFileProvider.h"
+#include "Core/IO/Virtual/VirtualFileSystem.h"
 #include "Core/Logging/CoreLogCategories.h"
 #include "Core/Logging/LogSystem.h"
 #include "Core/Logging/Logger.h"
+#include "Core/Paths/EnginePaths.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -28,10 +31,27 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
         .enableDebugger = true,
         .logDirectory = "Logs",
     });
+    auto* vfs = engine_.RegisterSubsystem<VirtualFileSystem>();
     engine_.Initialize();
 
     HYLUX_LOG_INFO(LogEngine, "HyluxEditor starting (Qt {}.{}.{})", QT_VERSION_MAJOR, QT_VERSION_MINOR,
                    QT_VERSION_PATCH);
+
+    const auto& repoRoot       = EnginePaths::RepoRoot();
+    const auto& contentRoot    = EnginePaths::ProjectContentRoot();
+    if (repoRoot.empty())
+    {
+        HYLUX_LOG_WARN(LogEngine,
+                       "VFS: could not discover repo root (no vcpkg.json found walking up from exe)");
+    }
+    else
+    {
+        vfs->Mount("/Engine/", std::make_shared<LooseFileProvider>(repoRoot / "Engine"), 0);
+    }
+    if (!contentRoot.empty())
+    {
+        vfs->Mount("/Game/", std::make_shared<LooseFileProvider>(contentRoot), 0);
+    }
 
     QObject::connect(guiApp_.get(), &QCoreApplication::aboutToQuit, guiApp_.get(), [this]() {
         HYLUX_LOG_INFO(LogEngine, "HyluxEditor shutting down");

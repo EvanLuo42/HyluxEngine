@@ -21,6 +21,7 @@ endif ()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 option(HYLUX_BUILD_EDITOR "Build the Hylux Editor" ON)
+option(HYLUX_BUILD_TESTS  "Build the Hylux test targets" ON)
 
 include(DetectPlatform)
 
@@ -53,5 +54,9 @@ elseif (HYLUX_ARCH_ARM64)
 endif ()
 
 include(MathConfig)
+
+if (HYLUX_BUILD_TESTS)
+    enable_testing()
+endif ()
 
 add_subdirectory(Engine)

@@ -28,6 +28,10 @@ target_compile_definitions(${HYLUX_RUNTIME_TARGET} PUBLIC
     $<$<CONFIG:MinSizeRel>:HYLUX_LOG_LEVEL_MIN=2>
 )
 
+if (WIN32)
+    target_link_libraries(${HYLUX_RUNTIME_TARGET} PUBLIC Shell32 Ole32)
+endif ()
+
 set_target_properties(${HYLUX_RUNTIME_TARGET} PROPERTIES
     FOLDER "Hylux"
     DEBUG_POSTFIX "d"

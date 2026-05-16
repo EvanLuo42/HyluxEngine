@@ -3,6 +3,8 @@
 
 #include "Core/Logging/LogSystem.h"
 
+#include "Core/IO/IFileSystem.h"
+#include "Core/IO/PhysicalFileSystem.h"
 #include "Core/Logging/AsyncDispatcher.h"
 #include "Core/Logging/Logger.h"
 #include "Core/Logging/Sinks/ConsoleSink.h"
@@ -10,8 +12,8 @@
 #include "Core/Logging/Sinks/FileSink.h"
 #include "Core/Logging/SyncDispatcher.h"
 
-#include <filesystem>
 #include <memory>
+#include <string>
 #include <utility>
 
 namespace Hylux
@@ -29,10 +31,10 @@ void AttachSinks(DispatcherT& dispatcher, const LogSystemConfig& config)
 #if defined(HYLUX_DESKTOP)
     if (config.enableFile)
     {
-        const std::filesystem::path dir =
-            std::filesystem::path(config.logDirectory).is_absolute()
-                ? std::filesystem::path(config.logDirectory)
-                : std::filesystem::current_path() / config.logDirectory;
+        auto fs = PhysicalFileSystem::Create();
+        std::string dir = fs && !fs->IsAbsolute(config.logDirectory)
+            ? fs->JoinPath(fs->CurrentDirectory(), config.logDirectory)
+            : std::string(config.logDirectory);
         dispatcher.AddSink(std::make_unique<FileSink>(dir));
     }
 #else

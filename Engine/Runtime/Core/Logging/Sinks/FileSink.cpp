@@ -3,12 +3,14 @@
 
 #include "Core/Logging/Sinks/FileSink.h"
 
+#include "Core/IO/IFile.h"
+#include "Core/IO/IFileSystem.h"
+#include "Core/IO/PhysicalFileSystem.h"
+
 #include <chrono>
 #include <format>
-#include <ios>
 #include <iterator>
 #include <string>
-#include <system_error>
 
 namespace Hylux
 {
@@ -51,14 +53,17 @@ void FormatLine(std::string& out, const LogRecord& record)
 
 } // namespace
 
-FileSink::FileSink(const std::filesystem::path& directory)
+FileSink::FileSink(std::string_view directory)
+    : fileSystem_(PhysicalFileSystem::Create())
 {
-    std::error_code ec;
-    std::filesystem::create_directories(directory, ec);
-    filePath_ = directory / MakeFilename(std::chrono::system_clock::now());
-    stream_.open(filePath_, std::ios::out | std::ios::trunc);
-    if (!stream_.is_open())
+    if (!fileSystem_) return;
+
+    fileSystem_->CreateDirectories(directory);
+    filePath_ = fileSystem_->JoinPath(directory, MakeFilename(std::chrono::system_clock::now()));
+    file_     = fileSystem_->Open(filePath_, FileOpenMode::Write);
+    if (!file_ || !file_->IsValid())
     {
+        file_.reset();
         filePath_.clear();
     }
 }
@@ -66,10 +71,10 @@ FileSink::FileSink(const std::filesystem::path& directory)
 FileSink::~FileSink()
 {
     std::lock_guard<std::mutex> guard(mutex_);
-    if (stream_.is_open())
+    if (file_)
     {
-        stream_.flush();
-        stream_.close();
+        file_->Flush();
+        file_.reset();
     }
 }
 
@@ -80,18 +85,18 @@ void FileSink::Submit(const LogRecord& record)
     FormatLine(line, record);
 
     std::lock_guard<std::mutex> guard(mutex_);
-    if (stream_.is_open())
+    if (file_)
     {
-        stream_.write(line.data(), static_cast<std::streamsize>(line.size()));
+        file_->Write(line.data(), static_cast<FileSize>(line.size()));
     }
 }
 
 void FileSink::Flush()
 {
     std::lock_guard<std::mutex> guard(mutex_);
-    if (stream_.is_open())
+    if (file_)
     {
-        stream_.flush();
+        file_->Flush();
     }
 }
 

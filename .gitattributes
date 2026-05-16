@@ -1,0 +1,136 @@
+# Default: let Git auto-detect text vs binary, normalize to LF in the repo.
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+# Force LF for cross-platform source / scripts
+# ---------------------------------------------------------------------------
+*.c              text eol=lf
+*.cc             text eol=lf
+*.cpp            text eol=lf
+*.cxx            text eol=lf
+*.h              text eol=lf
+*.hh             text eol=lf
+*.hpp            text eol=lf
+*.hxx            text eol=lf
+*.inl            text eol=lf
+*.ipp            text eol=lf
+*.cs             text eol=lf
+*.qml            text eol=lf
+*.qrc            text eol=lf
+*.ui             text eol=lf
+*.json           text eol=lf
+*.yaml           text eol=lf
+*.yml            text eol=lf
+*.toml           text eol=lf
+*.xml            text eol=lf
+*.md             text eol=lf
+*.txt            text eol=lf
+*.glsl           text eol=lf
+*.hlsl           text eol=lf
+*.frag           text eol=lf
+*.vert           text eol=lf
+*.comp           text eol=lf
+*.geom           text eol=lf
+*.tesc           text eol=lf
+*.tese           text eol=lf
+*.mesh           text eol=lf
+*.task           text eol=lf
+*.rgen           text eol=lf
+*.rchit          text eol=lf
+*.rmiss          text eol=lf
+*.rahit          text eol=lf
+*.rcall          text eol=lf
+*.rint           text eol=lf
+*.sh             text eol=lf
+CMakeLists.txt   text eol=lf
+*.cmake          text eol=lf
+.clang-format    text eol=lf
+.clang-tidy      text eol=lf
+.editorconfig    text eol=lf
+.gitattributes   text eol=lf
+.gitignore       text eol=lf
+
+# ---------------------------------------------------------------------------
+# Force CRLF for Windows-only files
+# ---------------------------------------------------------------------------
+*.sln              text eol=crlf
+*.vcxproj          text eol=crlf
+*.vcxproj.filters  text eol=crlf
+*.vcxproj.user     text eol=crlf
+*.props            text eol=crlf
+*.targets          text eol=crlf
+*.bat              text eol=crlf
+*.cmd              text eol=crlf
+*.ps1              text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Mark as binary (no text diff, no eol conversion)
+# ---------------------------------------------------------------------------
+*.ico            binary
+*.icns           binary
+
+# ---------------------------------------------------------------------------
+# Git LFS: large binary assets, prebuilt third-party archives, runtime data
+# ---------------------------------------------------------------------------
+# Images
+*.png            filter=lfs diff=lfs merge=lfs -text
+*.jpg            filter=lfs diff=lfs merge=lfs -text
+*.jpeg           filter=lfs diff=lfs merge=lfs -text
+*.tga            filter=lfs diff=lfs merge=lfs -text
+*.bmp            filter=lfs diff=lfs merge=lfs -text
+*.tif            filter=lfs diff=lfs merge=lfs -text
+*.tiff           filter=lfs diff=lfs merge=lfs -text
+*.psd            filter=lfs diff=lfs merge=lfs -text
+*.exr            filter=lfs diff=lfs merge=lfs -text
+*.hdr            filter=lfs diff=lfs merge=lfs -text
+*.dds            filter=lfs diff=lfs merge=lfs -text
+*.ktx            filter=lfs diff=lfs merge=lfs -text
+*.ktx2           filter=lfs diff=lfs merge=lfs -text
+
+# 3D / model
+*.fbx            filter=lfs diff=lfs merge=lfs -text
+*.obj            filter=lfs diff=lfs merge=lfs -text
+*.gltf           filter=lfs diff=lfs merge=lfs -text
+*.glb            filter=lfs diff=lfs merge=lfs -text
+*.usd            filter=lfs diff=lfs merge=lfs -text
+*.usda           filter=lfs diff=lfs merge=lfs -text
+*.usdc           filter=lfs diff=lfs merge=lfs -text
+*.usdz           filter=lfs diff=lfs merge=lfs -text
+*.abc            filter=lfs diff=lfs merge=lfs -text
+*.blend          filter=lfs diff=lfs merge=lfs -text
+
+# Audio
+*.wav            filter=lfs diff=lfs merge=lfs -text
+*.ogg            filter=lfs diff=lfs merge=lfs -text
+*.mp3            filter=lfs diff=lfs merge=lfs -text
+*.flac           filter=lfs diff=lfs merge=lfs -text
+
+# Video
+*.mp4            filter=lfs diff=lfs merge=lfs -text
+*.mov            filter=lfs diff=lfs merge=lfs -text
+*.webm           filter=lfs diff=lfs merge=lfs -text
+
+# Fonts
+*.ttf            filter=lfs diff=lfs merge=lfs -text
+*.otf            filter=lfs diff=lfs merge=lfs -text
+*.woff           filter=lfs diff=lfs merge=lfs -text
+*.woff2          filter=lfs diff=lfs merge=lfs -text
+
+# Archives / prebuilt third-party
+*.zip            filter=lfs diff=lfs merge=lfs -text
+*.7z             filter=lfs diff=lfs merge=lfs -text
+*.tar            filter=lfs diff=lfs merge=lfs -text
+*.tar.gz         filter=lfs diff=lfs merge=lfs -text
+*.tgz            filter=lfs diff=lfs merge=lfs -text
+*.tar.xz         filter=lfs diff=lfs merge=lfs -text
+*.tar.zst        filter=lfs diff=lfs merge=lfs -text
+
+# Native binaries shipped in ThirdParty/
+*.dll            filter=lfs diff=lfs merge=lfs -text
+*.pdb            filter=lfs diff=lfs merge=lfs -text
+*.lib            filter=lfs diff=lfs merge=lfs -text
+*.exp            filter=lfs diff=lfs merge=lfs -text
+*.so             filter=lfs diff=lfs merge=lfs -text
+*.so.*           filter=lfs diff=lfs merge=lfs -text
+*.dylib          filter=lfs diff=lfs merge=lfs -text
+*.a              filter=lfs diff=lfs merge=lfs -text

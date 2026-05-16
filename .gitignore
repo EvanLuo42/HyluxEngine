@@ -1,0 +1,86 @@
+# Build outputs
+Build/
+Install/
+Bin/
+Lib/
+out/
+cmake-build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Visual Studio / MSVC
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.aps
+*.ncb
+*.opensdf
+*.ipch
+ipch/
+*.pdb
+*.idb
+*.ilk
+*.exp
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains
+.idea/
+*.iml
+
+# Qt
+*.qmlc
+*.jsc
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+.qmake.stash
+.qmake.cache
+*.pro.user
+*.pro.user.*
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor swap / backup
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+*.rej
+
+# Logs
+*.log
+
+# vcpkg manifest install output (regenerated from vcpkg.json)
+vcpkg_installed/
+# vcpkg local cache inside the in-tree clone (only the tool itself should be tracked / submoduled)
+vcpkg/buildtrees/
+vcpkg/downloads/
+vcpkg/packages/
+vcpkg/installed/
+
+# Local overrides
+CMakeUserPresets.json
+LocalConfig.cmake

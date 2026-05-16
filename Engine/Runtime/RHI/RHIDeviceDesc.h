@@ -32,6 +32,7 @@ struct DeviceDesc
     BindlessHeapSizes    bindlessSizes{};
     RhiValidationLevel   rhiValidation{RhiValidationLevel::Off};
     GapiValidationLevel  gapiValidation{GapiValidationLevel::Off};
+    GpuCrashReporterKind crashReporter{GpuCrashReporterKind::Auto};
 };
 
 /// @brief Read-only device limit set reported by IRHIDevice::GetLimits.

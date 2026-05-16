@@ -133,6 +133,38 @@ enum class CaptureStatus : std::uint32_t
     Failed,
 };
 
+/// @brief Supported GPU crash / post-mortem dump backend kinds for IGpuCrashReporter.
+enum class GpuCrashReporterKind : std::uint32_t
+{
+    Auto = 0,
+    None,
+    NvAftermath,
+    D3D12Dred,
+    AmdGpuCrashAnalyzer,
+};
+
+/// @brief Lifecycle state returned by IGpuCrashReporter::PollCrashStatus.
+enum class GpuCrashStatus : std::uint32_t
+{
+    NotCrashed = 0,
+    Collecting,
+    DumpReady,
+    Timeout,
+    Unavailable,
+};
+
+/// @brief Classification of a detected GPU fault, surfaced via GpuFaultInfo::kind.
+enum class GpuFaultKind : std::uint32_t
+{
+    Unknown = 0,
+    Hang,
+    PageFault,
+    InvalidParameter,
+    OutOfMemory,
+    DeviceReset,
+    DriverError,
+};
+
 /// @brief Vendor-provided SDK adapters surfaced through IRHIVendorExtension.
 enum class VendorExtensionKind : std::uint32_t
 {

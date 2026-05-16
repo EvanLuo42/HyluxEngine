@@ -8,6 +8,7 @@
 #include "Core/Logging/Logger.h"
 #include "RHI/Capture/IGraphicsCaptureTool.h"
 #include "RHI/CreateRHIInstance.h"
+#include "RHI/Diagnostics/IGpuCrashReporter.h"
 #include "RHI/Validation/RhiValidationLayer.h"
 
 #include <utility>
@@ -96,6 +97,11 @@ IGraphicsCaptureTool* RHISubsystem::GetCaptureTool() const noexcept
         return instance_->GetCaptureTool();
     }
     return nullptr;
+}
+
+IGpuCrashReporter* RHISubsystem::GetCrashReporter() const noexcept
+{
+    return device_ ? device_->GetCrashReporter() : nullptr;
 }
 
 } // namespace Hylux::RHI

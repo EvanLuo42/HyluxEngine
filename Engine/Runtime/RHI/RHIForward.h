@@ -39,6 +39,7 @@ class IGpuRangeProfiler;
 class IGpuMetricSet;
 class IGpuTraceCapture;
 class IShaderProfiler;
+class IGpuCrashReporter;
 
 struct InstanceDesc;
 struct AdapterDesc;
@@ -88,6 +89,9 @@ struct GpuMetricDesc;
 struct GpuMetricValue;
 struct GpuTraceDesc;
 struct ShaderSampleStats;
+struct ShaderBinaryRegistration;
+struct ResourceRegistration;
+struct GpuFaultInfo;
 
 struct RHINativeHandle;
 struct FormatSupport;
@@ -106,6 +110,9 @@ enum class BindlessKind : std::uint32_t;
 enum class CaptureToolKind : std::uint32_t;
 enum class CaptureActivity : std::uint32_t;
 enum class CaptureStatus : std::uint32_t;
+enum class GpuCrashReporterKind : std::uint32_t;
+enum class GpuCrashStatus : std::uint32_t;
+enum class GpuFaultKind : std::uint32_t;
 enum class VendorExtensionKind : std::uint32_t;
 enum class RhiValidationLevel : std::uint32_t;
 enum class GapiValidationLevel : std::uint32_t;

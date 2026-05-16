@@ -76,6 +76,10 @@ enum class Feature : std::uint16_t
     CaptureRenderDoc,
     CaptureRgp,
 
+    CrashReporterNvAftermath,
+    CrashReporterD3D12Dred,
+    CrashReporterAmd,
+
     Count,
 };
 

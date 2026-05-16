@@ -95,6 +95,10 @@ public:
     /// @brief Returns the active capture tool, or nullptr if no SDK was loaded.
     [[nodiscard]] virtual IGraphicsCaptureTool* GetCaptureTool() const noexcept = 0;
 
+    /// @brief Returns the active GPU crash reporter, or nullptr if no backend was
+    ///        loaded. Driven by DeviceDesc::crashReporter.
+    [[nodiscard]] virtual IGpuCrashReporter* GetCrashReporter() const noexcept = 0;
+
     /// @brief Blocks until all submitted work on every queue has completed.
     virtual bool WaitIdle() = 0;
 };

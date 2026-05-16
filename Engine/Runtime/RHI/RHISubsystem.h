@@ -20,6 +20,7 @@ namespace Hylux::RHI
 {
 
 class IGraphicsCaptureTool;
+class IGpuCrashReporter;
 
 /// @brief Subsystem that brings up the RHI: instance, adapter, device, validation wrapper.
 ///        Construct via Engine::RegisterSubsystem<RHISubsystem>(instanceDesc, deviceDesc)
@@ -49,6 +50,7 @@ public:
     [[nodiscard]] IRHIAdapter*  GetSelectedAdapter() const noexcept { return adapter_.Get(); }
     [[nodiscard]] IRHIDevice*   GetDevice() const noexcept { return device_.Get(); }
     [[nodiscard]] IGraphicsCaptureTool* GetCaptureTool() const noexcept;
+    [[nodiscard]] IGpuCrashReporter*    GetCrashReporter() const noexcept;
 
 private:
     InstanceDesc      instanceDesc_;

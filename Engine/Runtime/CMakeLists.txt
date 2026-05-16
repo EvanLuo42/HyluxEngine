@@ -21,6 +21,13 @@ target_compile_features(${HYLUX_RUNTIME_TARGET} PUBLIC cxx_std_20)
 
 target_precompile_headers(${HYLUX_RUNTIME_TARGET} PRIVATE ${HYLUX_RUNTIME_PCH_HEADER})
 
+target_compile_definitions(${HYLUX_RUNTIME_TARGET} PUBLIC
+    $<$<CONFIG:Debug>:HYLUX_LOG_LEVEL_MIN=0>
+    $<$<CONFIG:RelWithDebInfo>:HYLUX_LOG_LEVEL_MIN=1>
+    $<$<CONFIG:Release>:HYLUX_LOG_LEVEL_MIN=2>
+    $<$<CONFIG:MinSizeRel>:HYLUX_LOG_LEVEL_MIN=2>
+)
+
 set_target_properties(${HYLUX_RUNTIME_TARGET} PROPERTIES
     FOLDER "Hylux"
     DEBUG_POSTFIX "d"

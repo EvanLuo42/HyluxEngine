@@ -46,4 +46,12 @@ elseif (HYLUX_PLATFORM_CONSOLE)
     add_compile_definitions(HYLUX_CONSOLE=1)
 endif ()
 
+if (HYLUX_ARCH_X64)
+    add_compile_definitions(HYLUX_ARCH_X64=1)
+elseif (HYLUX_ARCH_ARM64)
+    add_compile_definitions(HYLUX_ARCH_ARM64=1)
+endif ()
+
+include(MathConfig)
+
 add_subdirectory(Engine)

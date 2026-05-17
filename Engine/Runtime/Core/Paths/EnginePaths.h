@@ -25,4 +25,11 @@ namespace Hylux::EnginePaths
 ///        create it on first write. Returns an empty path if the platform API fails.
 [[nodiscard]] const std::filesystem::path& UserAppDataRoot();
 
+/// @brief Returns the directory containing the currently running executable. Cached on
+///        the first successful call. Use this as the root for all runtime-emitted
+///        artifacts (logs, shader caches, crash dumps) so they live alongside the binary
+///        and never leak into per-user app-data. Returns an empty path if the platform
+///        API fails.
+[[nodiscard]] const std::filesystem::path& ExecutableDir();
+
 } // namespace Hylux::EnginePaths

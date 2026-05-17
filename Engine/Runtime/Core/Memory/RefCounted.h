@@ -72,7 +72,7 @@ public:
     {
         if (weakCount_.fetch_sub(1, std::memory_order_acq_rel) == 1)
         {
-            ::operator delete(const_cast<RefCounted*>(this));
+            ::operator delete(const_cast<void*>(dynamic_cast<const void*>(this)));
         }
     }
 

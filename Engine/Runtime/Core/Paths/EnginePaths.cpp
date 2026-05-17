@@ -86,4 +86,10 @@ const std::filesystem::path& UserAppDataRoot()
     return kRoot;
 }
 
+const std::filesystem::path& ExecutableDir()
+{
+    static const std::filesystem::path kRoot = ExecutableDirectory();
+    return kRoot;
+}
+
 } // namespace Hylux::EnginePaths

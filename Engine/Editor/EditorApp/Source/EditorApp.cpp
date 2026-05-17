@@ -3,12 +3,17 @@
 
 #include "EditorApp.h"
 
+#include "Core/IO/Blob/FilesystemBlobStore.h"
 #include "Core/IO/Virtual/Providers/LooseFileProvider.h"
 #include "Core/IO/Virtual/VirtualFileSystem.h"
 #include "Core/Logging/CoreLogCategories.h"
 #include "Core/Logging/LogSystem.h"
 #include "Core/Logging/Logger.h"
 #include "Core/Paths/EnginePaths.h"
+#include "RHI/RHIDeviceDesc.h"
+#include "RHI/RHIInstanceDesc.h"
+#include "RHI/RHISubsystem.h"
+#include "Shader/ShaderSubsystem.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -29,9 +34,26 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
         .enableConsole = true,
         .enableFile = true,
         .enableDebugger = true,
-        .logDirectory = "Logs",
+        .logDirectory = (EnginePaths::ExecutableDir() / "Logs").string(),
     });
     auto* vfs = engine_.RegisterSubsystem<VirtualFileSystem>();
+
+    RHI::InstanceDesc rhiInstanceDesc{};
+    rhiInstanceDesc.applicationName = "HyluxEditor";
+    RHI::DeviceDesc rhiDeviceDesc{};
+#if !defined(NDEBUG)
+    rhiInstanceDesc.gapiValidation = RHI::GapiValidationLevel::Standard;
+    rhiDeviceDesc.gapiValidation   = RHI::GapiValidationLevel::Standard;
+#endif
+    engine_.RegisterSubsystem<RHI::RHISubsystem>(rhiInstanceDesc, rhiDeviceDesc);
+
+    Shader::ShaderSubsystem::Config shaderConfig{};
+    shaderConfig.blobStore =
+        std::make_unique<FilesystemBlobStore>(EnginePaths::ExecutableDir() / "ShaderCache");
+    shaderConfig.archiveKey      = "Win_Vulkan.hslib";
+    shaderConfig.enableHotReload = true;
+    engine_.RegisterSubsystem<Shader::ShaderSubsystem>(std::move(shaderConfig));
+
     engine_.Initialize();
 
     HYLUX_LOG_INFO(LogEngine, "HyluxEditor starting (Qt {}.{}.{})", QT_VERSION_MAJOR, QT_VERSION_MINOR,

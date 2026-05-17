@@ -10,6 +10,9 @@
       "default-features": false,
       "features": ["qtquick"]
     },
-    "doctest"
+    "doctest",
+    "vulkan-headers",
+    "volk",
+    "vulkan-memory-allocator"
   ]
 }

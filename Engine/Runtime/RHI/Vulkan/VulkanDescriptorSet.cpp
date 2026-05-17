@@ -4,9 +4,13 @@
 
 #include "RHI/Vulkan/VulkanDescriptorSet.h"
 
+#include "Core/Logging/CoreLogCategories.h"
+#include "Core/Logging/Logger.h"
 #include "RHI/Vulkan/VulkanDebugUtils.h"
 #include "RHI/Vulkan/VulkanDevice.h"
 #include "RHI/Vulkan/VulkanEnums.h"
+
+#include <atomic>
 
 namespace Hylux::RHI::Vulkan
 {
@@ -73,7 +77,16 @@ VulkanDescriptorSet::~VulkanDescriptorSet()
 
 IRHIDescriptorSetLayout* VulkanDescriptorSet::GetLayout() const noexcept { return layout_.Get(); }
 
-void VulkanDescriptorSet::Update(std::span<const DescriptorWrite> /*writes*/) { /* TODO */ }
+void VulkanDescriptorSet::Update(std::span<const DescriptorWrite> /*writes*/)
+{
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed))
+    {
+        HYLUX_LOG(::Hylux::LogRender, Error,
+                  "VulkanDescriptorSet::Update not implemented; descriptor writes dropped "
+                  "(bindless-first engine — explicit descriptor sets are a stub path)");
+    }
+}
 
 RHINativeHandle VulkanDescriptorSet::GetNativeHandle(NativeHandleQuery /*q*/) const noexcept
 {

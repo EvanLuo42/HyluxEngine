@@ -10,6 +10,7 @@
 #include "RHI/IRHIDevice.h"
 #include "RHI/IRHIFence.h"
 #include "RHI/IRHIQueue.h"
+#include "RenderGraph/Internal/RGTransientResourcePool.h"
 #include "RenderGraph/RenderGraph.h"
 #include "Renderer/Material/MaterialProxy.h"
 #include "Renderer/Material/MaterialProxyCache.h"
@@ -94,6 +95,14 @@ void RenderThread::Run()
     cmdListRing_.assign(framesInFlight, Ref<RHI::IRHICommandList>{});
     slotFenceValues_.assign(framesInFlight, 0ull);
 
+    // Lazy-init transient pool. Factories close over the captured device pointer (which
+    // outlives this thread per the Deps lifetime contract).
+    RHI::IRHIDevice* devicePtr = deps_.device;
+    transientPool_             = std::make_unique<RG::Internal::RGTransientResourcePool>(
+        [devicePtr](const RHI::TextureDesc& desc) { return devicePtr->CreateTexture(desc); },
+        [devicePtr](const RHI::BufferDesc&  desc) { return devicePtr->CreateBuffer(desc); },
+        framesInFlight);
+
     HYLUX_LOG_INFO(LogRender, "RenderThread started");
 
     while (true)
@@ -150,6 +159,15 @@ void RenderThread::Run()
         }
         cmdListRing_[slot].Reset();
 
+        // Fence wait above guarantees the slot's prior submission is complete, so any
+        // transient pool entry whose lastUsedFrame is at least framesInFlight old is
+        // GPU-idle and safe to evict. We use framesInFlight + 2 as the idle window so
+        // resources are reused for a couple of frames before being released.
+        if (transientPool_)
+        {
+            transientPool_->EndFrame(renderFrameId_, framesInFlight + 2u);
+        }
+
         auto cmdList = commandPool_->AllocateCommandList();
         bool ok      = static_cast<bool>(cmdList);
         if (ok && !cmdList->Begin())
@@ -159,7 +177,8 @@ void RenderThread::Run()
         }
         if (ok)
         {
-            RenderFrame(cachedBegin_, renderFrameId_, *cmdList);
+            frameArena_.Reset();
+            RenderFrame(cachedBegin_, renderFrameId_, *cmdList, frameArena_, *transientPool_);
             cmdList->End();
 
             ++fenceValue_;
@@ -207,6 +226,7 @@ void RenderThread::Run()
     }
     cmdListRing_.clear();
     slotFenceValues_.clear();
+    transientPool_.reset();
     commandPool_.Reset();
     HYLUX_LOG_INFO(LogRender, "RenderThread exited");
 }
@@ -265,7 +285,8 @@ void RenderThread::DispatchMutation(const StructuralCommand& command)
 }
 
 void RenderThread::RenderFrame(const BeginFrameCmd& begin, std::uint64_t renderFrameId,
-                               RHI::IRHICommandList& cmd) const
+                               RHI::IRHICommandList& cmd, FrameAllocator& frameArena,
+                               RG::Internal::RGTransientResourcePool& transientPool) const
 {
     const std::uint32_t transformBindless = deps_.transformBuffer != nullptr
                                                 ? deps_.transformBuffer->AcquireReadHalfBindlessIndex(begin.frameId)
@@ -286,9 +307,9 @@ void RenderThread::RenderFrame(const BeginFrameCmd& begin, std::uint64_t renderF
             continue;
         }
         SceneView       view(request);
-        RG::RenderGraph graph(deps_.device);
+        RG::RenderGraph graph(deps_.device, &frameArena, &transientPool, renderFrameId);
         RenderContext   ctx(graph, view, *deps_.proxies, *deps_.resources, transformBindless, renderFrameId,
-                            deps_.psoCache, deps_.transformBuffer, deps_.uploadHeap);
+                            deps_.psoCache, deps_.transformBuffer, deps_.uploadHeap, frameArena);
         request.path->BuildGraph(ctx);
         graph.Compile();
         graph.Execute(cmd);

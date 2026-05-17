@@ -22,14 +22,22 @@
 
 #include <cstdint>
 #include <memory>
+#include <memory_resource>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+namespace Hylux
+{
+class FrameAllocator;
+}
+
 namespace Hylux::RG
 {
+
+namespace Internal { class RGTransientResourcePool; }
 
 /// @brief Per-frame DAG of RenderGraph passes. Lifetime is one frame:
 ///        construct -> AddPass(s) -> Compile -> Execute. Not an ISubsystem; the future
@@ -37,7 +45,18 @@ namespace Hylux::RG
 class RenderGraph
 {
 public:
-    explicit RenderGraph(RHI::IRHIDevice* device);
+    /// @brief Constructs a graph bound to a device, optionally backed by a frame arena
+    ///        and a transient resource pool.
+    ///        - `frameArena` non-null: per-compile scratch vectors allocate from it.
+    ///        - `transientPool` non-null: non-imported texture/buffer nodes reuse cached
+    ///          GPU resources from the pool keyed by desc. `frameId` is required when a
+    ///          pool is supplied so the pool can gate reuse against frames-in-flight.
+    ///        - Either pointer may be null, in which case the graph falls back to the
+    ///          default heap allocator / direct CreateTexture/Buffer calls.
+    explicit RenderGraph(RHI::IRHIDevice*               device,
+                         FrameAllocator*                frameArena    = nullptr,
+                         Internal::RGTransientResourcePool* transientPool = nullptr,
+                         std::uint64_t                  frameId       = 0);
     ~RenderGraph();
 
     RenderGraph(const RenderGraph&)            = delete;
@@ -60,6 +79,11 @@ public:
     void Execute(RHI::IRHICommandList& cmd);
 
     [[nodiscard]] RHI::IRHIDevice* GetDevice() const noexcept { return device_; }
+
+    /// @brief Returns the pmr resource backing per-pass / per-compile scratch vectors.
+    ///        Either the bound FrameAllocator or std::pmr::get_default_resource().
+    ///        Defined out-of-line so the header does not need the FrameAllocator definition.
+    [[nodiscard]] std::pmr::memory_resource* GetPmrResource() const noexcept;
 
 private:
     friend class RGBuilder;
@@ -115,15 +139,18 @@ private:
     void RecordPass(RHI::IRHICommandList& cmd, std::uint32_t compiledIndex);
 
     RHI::IRHIDevice*                              device_{nullptr};
+    FrameAllocator*                               arena_{nullptr};
+    Internal::RGTransientResourcePool*            transientPool_{nullptr};
+    std::uint64_t                                 frameId_{0};
     std::vector<std::unique_ptr<RGPass>>          passOwners_;
     std::vector<Internal::RGPassNode>             passes_;
     std::vector<Internal::RGTextureNode>          textures_;
     std::vector<Internal::RGBufferNode>           buffers_;
-    std::vector<std::uint32_t>                    executionOrder_;
+    std::pmr::vector<std::uint32_t>               executionOrder_;
     std::vector<std::vector<std::uint32_t>>       textureVersionProducers_;
     std::vector<std::vector<std::uint32_t>>       bufferVersionProducers_;
-    std::vector<Internal::RGTextureState>         currentTextureState_;
-    std::vector<Internal::RGBufferState>          currentBufferState_;
+    std::pmr::vector<Internal::RGTextureState>    currentTextureState_;
+    std::pmr::vector<Internal::RGBufferState>     currentBufferState_;
     std::unique_ptr<Internal::RGResourceRegistry> registry_;
     bool                                          compiled_{false};
 };
@@ -137,12 +164,11 @@ TPass* RenderGraph::AddPass(std::string_view name, Args&&... args)
     TPass* raw = owned.get();
     raw->name_ = std::string(name);
 
-    const std::uint32_t passIndex = static_cast<std::uint32_t>(passes_.size());
-    Internal::RGPassNode node;
+    const std::uint32_t   passIndex = static_cast<std::uint32_t>(passes_.size());
+    Internal::RGPassNode& node      = passes_.emplace_back(GetPmrResource());
     node.name     = std::string(name);
     node.pass     = raw;
     node.isRaster = std::is_base_of_v<RGRasterPass, TPass>;
-    passes_.push_back(std::move(node));
     passOwners_.push_back(std::move(owned));
 
     if constexpr (std::is_base_of_v<RGRasterPass, TPass>)

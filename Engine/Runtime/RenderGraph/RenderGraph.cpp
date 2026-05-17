@@ -5,16 +5,19 @@
 
 #include "RenderGraph/RenderGraph.h"
 
+#include "Core/Memory/FrameAllocator.h"
 #include "RHI/IRHIBuffer.h"
 #include "RHI/IRHICommandList.h"
 #include "RHI/IRHIDevice.h"
 #include "RHI/IRHITexture.h"
 #include "RHI/RHIBarriers.h"
 #include "RHI/RHIPipelineDesc.h"
+#include "RenderGraph/Internal/RGTransientResourcePool.h"
 #include "RenderGraph/RGContext.h"
 
 #include <algorithm>
 #include <cassert>
+#include <memory_resource>
 #include <optional>
 #include <span>
 
@@ -110,10 +113,22 @@ constexpr std::uint32_t kInvalidPassIndex = 0xFFFFFFFFu;
     return desc;
 }
 
+[[nodiscard]] std::pmr::memory_resource* ResolveResource(FrameAllocator* arena) noexcept
+{
+    return arena != nullptr ? arena->GetMemoryResource() : std::pmr::get_default_resource();
+}
+
 } // namespace
 
-RenderGraph::RenderGraph(RHI::IRHIDevice* device)
-    : device_(device)
+RenderGraph::RenderGraph(RHI::IRHIDevice* device, FrameAllocator* frameArena,
+                         Internal::RGTransientResourcePool* transientPool, std::uint64_t frameId)
+    : device_(device),
+      arena_(frameArena),
+      transientPool_(transientPool),
+      frameId_(frameId),
+      executionOrder_(ResolveResource(frameArena)),
+      currentTextureState_(ResolveResource(frameArena)),
+      currentBufferState_(ResolveResource(frameArena))
 {
     assert(device_ != nullptr && "RenderGraph requires a non-null device");
     registry_ = std::make_unique<Internal::RGResourceRegistry>(device_, &textures_, &buffers_);
@@ -125,6 +140,11 @@ RenderGraph::~RenderGraph()
     {
         registry_->Reset();
     }
+}
+
+std::pmr::memory_resource* RenderGraph::GetPmrResource() const noexcept
+{
+    return ResolveResource(arena_);
 }
 
 std::uint32_t RenderGraph::CreateTextureNode(std::string_view name, const RHI::TextureDesc& desc)
@@ -446,7 +466,9 @@ void RenderGraph::RealizeResources()
         }
         RHI::TextureDesc desc = node.desc;
         desc.usage |= node.inferredUsage;
-        node.realized = device_->CreateTexture(desc);
+        node.realized = transientPool_ != nullptr
+                            ? transientPool_->AcquireTexture(desc, frameId_)
+                            : device_->CreateTexture(desc);
         if (node.realized)
         {
             node.realized->SetDebugName(node.name);
@@ -461,7 +483,9 @@ void RenderGraph::RealizeResources()
         }
         RHI::BufferDesc desc = node.desc;
         desc.usage |= node.inferredUsage;
-        node.realized = device_->CreateBuffer(desc);
+        node.realized = transientPool_ != nullptr
+                            ? transientPool_->AcquireBuffer(desc, frameId_)
+                            : device_->CreateBuffer(desc);
         if (node.realized)
         {
             node.realized->SetDebugName(node.name);

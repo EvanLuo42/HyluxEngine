@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "Core/Utils/Flags.h"
+
 #include <cstdint>
 
 namespace Hylux::RHI
@@ -54,18 +56,7 @@ enum class ShaderStage : std::uint32_t
     All             = 0xFFFFFFFFu,
 };
 
-[[nodiscard]] constexpr ShaderStage operator|(ShaderStage a, ShaderStage b) noexcept
-{
-    return static_cast<ShaderStage>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
-}
-
-[[nodiscard]] constexpr ShaderStage operator&(ShaderStage a, ShaderStage b) noexcept
-{
-    return static_cast<ShaderStage>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
-}
-
-constexpr ShaderStage& operator|=(ShaderStage& a, ShaderStage b) noexcept { a = a | b; return a; }
-constexpr ShaderStage& operator&=(ShaderStage& a, ShaderStage b) noexcept { a = a & b; return a; }
+HYLUX_ENABLE_BITFLAGS(ShaderStage)
 
 /// @brief Identifies the encoded form of shader bytecode passed to CreateShaderModule.
 enum class ShaderBytecodeFormat : std::uint32_t
@@ -381,17 +372,7 @@ enum class BufferUsage : std::uint32_t
     ShaderBindingTable              = 1u << 10,
 };
 
-[[nodiscard]] constexpr BufferUsage operator|(BufferUsage a, BufferUsage b) noexcept
-{
-    return static_cast<BufferUsage>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
-}
-
-[[nodiscard]] constexpr BufferUsage operator&(BufferUsage a, BufferUsage b) noexcept
-{
-    return static_cast<BufferUsage>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
-}
-
-constexpr BufferUsage& operator|=(BufferUsage& a, BufferUsage b) noexcept { a = a | b; return a; }
+HYLUX_ENABLE_BITFLAGS(BufferUsage)
 
 /// @brief TextureUsage bit flags. Combinable via bitwise operators.
 enum class TextureUsage : std::uint32_t
@@ -407,17 +388,7 @@ enum class TextureUsage : std::uint32_t
     TransientAttachment    = 1u << 7,
 };
 
-[[nodiscard]] constexpr TextureUsage operator|(TextureUsage a, TextureUsage b) noexcept
-{
-    return static_cast<TextureUsage>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
-}
-
-[[nodiscard]] constexpr TextureUsage operator&(TextureUsage a, TextureUsage b) noexcept
-{
-    return static_cast<TextureUsage>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
-}
-
-constexpr TextureUsage& operator|=(TextureUsage& a, TextureUsage b) noexcept { a = a | b; return a; }
+HYLUX_ENABLE_BITFLAGS(TextureUsage)
 
 /// @brief Swapchain usage bit flags.
 enum class SwapchainUsage : std::uint32_t
@@ -428,10 +399,7 @@ enum class SwapchainUsage : std::uint32_t
     StorageImage      = 1u << 2,
 };
 
-[[nodiscard]] constexpr SwapchainUsage operator|(SwapchainUsage a, SwapchainUsage b) noexcept
-{
-    return static_cast<SwapchainUsage>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
-}
+HYLUX_ENABLE_BITFLAGS(SwapchainUsage)
 
 /// @brief Adapter capability flags reported by IRHIAdapter::GetDesc.
 enum class AdapterFlags : std::uint32_t
@@ -451,10 +419,7 @@ enum class CommandPoolFlagBits : std::uint32_t
     AllowIndividualReset = 1u << 1,
 };
 
-[[nodiscard]] constexpr CommandPoolFlagBits operator|(CommandPoolFlagBits a, CommandPoolFlagBits b) noexcept
-{
-    return static_cast<CommandPoolFlagBits>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
-}
+HYLUX_ENABLE_BITFLAGS(CommandPoolFlagBits)
 
 /// @brief Wrapper alias for CommandPoolFlagBits used in descriptor structs.
 using CommandPoolFlags = CommandPoolFlagBits;

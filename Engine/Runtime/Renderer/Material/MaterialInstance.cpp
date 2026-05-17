@@ -9,15 +9,6 @@
 
 namespace Hylux::Renderer
 {
-namespace
-{
-
-std::uint64_t HashMix(std::uint64_t seed, const void* data, std::size_t size) noexcept
-{
-    return Hash::Fnv1a64(static_cast<const char*>(data), size, seed);
-}
-
-} // namespace
 
 MaterialInstance::MaterialInstance(const Asset::MaterialAsset* asset) noexcept : asset_(asset) {}
 
@@ -103,14 +94,12 @@ std::uint64_t MaterialInstance::GetInstanceHash() const noexcept
     std::uint64_t h = Hash::Fnv1a64Offset;
     if (asset_ != nullptr)
     {
-        const auto assetHash = asset_->GetShaderMapHash();
-        h = HashMix(h, &assetHash, sizeof(assetHash));
+        h = Hash::MixU64(h, asset_->GetShaderMapHash());
     }
     for (const auto& [name, value] : overrides_)
     {
-        const auto nameRaw = Asset::ToU64(name);
-        h = HashMix(h, &nameRaw, sizeof(nameRaw));
-        h = HashMix(h, &value, sizeof(value));
+        h = Hash::MixU64(h, Asset::ToU64(name));
+        h = Hash::MixTrivial(h, value);
     }
     cachedInstanceHash_ = h;
 
@@ -128,9 +117,8 @@ std::uint64_t MaterialInstance::GetInstanceHash() const noexcept
             {
                 continue;
             }
-            const auto nameRaw = Asset::ToU64(desc.name);
-            perm = HashMix(perm, &nameRaw, sizeof(nameRaw));
-            perm = HashMix(perm, &it->second, sizeof(it->second));
+            perm = Hash::MixU64(perm, Asset::ToU64(desc.name));
+            perm = Hash::MixTrivial(perm, it->second);
         }
     }
     cachedPermutationKey_ = perm;

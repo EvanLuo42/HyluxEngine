@@ -18,8 +18,9 @@ Ref<IRHIDevice> CreateRhiValidationWrapper(Ref<IRHIDevice> innerDevice, RhiValid
     if (level != RhiValidationLevel::Off)
     {
         HYLUX_LOG(LogRender, Warn,
-                  "CreateRhiValidationWrapper: validation level {} requested but the "
-                  "engine-side wrapper is not yet implemented; returning unwrapped device",
+                  "CreateRhiValidationWrapper: RhiValidationLevel={} requested but the "
+                  "engine-side wrapper is a stub; returning the unwrapped device. "
+                  "Configure GapiValidationLevel for driver-side validation in the meantime.",
                   static_cast<std::uint32_t>(level));
     }
     return innerDevice;

@@ -3,6 +3,8 @@
 
 #include "Core/Logging/Sinks/ConsoleSink.h"
 
+#include "Core/Utils/Assert.h"
+
 #include <chrono>
 #include <cstdio>
 #include <format>
@@ -63,12 +65,13 @@ ConsoleSink::ConsoleSink()
     if (GetConsoleWindow() == nullptr)
     {
         bool attached = (AttachConsole(ATTACH_PARENT_PROCESS) != FALSE);
-    #if !defined(NDEBUG)
-        if (!attached)
+        if constexpr (Diagnostics::kBuildIsDebug)
         {
-            attached = (AllocConsole() != FALSE);
+            if (!attached)
+            {
+                attached = (AllocConsole() != FALSE);
+            }
         }
-    #endif
         if (attached)
         {
             FILE* dummy = nullptr;

@@ -10,6 +10,11 @@
 #include <cstdint>
 #include <string_view>
 
+namespace Hylux
+{
+class FrameAllocator;
+}
+
 namespace Hylux::RHI
 {
 struct TextureDesc;
@@ -35,7 +40,8 @@ class RenderContext
 public:
     RenderContext(RG::RenderGraph& graph, const SceneView& view, const ProxyRegistry& proxies,
                   RenderResources& resources, std::uint32_t transformBufferBindlessIndex, std::uint64_t renderFrameId,
-                  PsoCache* psoCache, TransformDoubleBuffer* transformBuffer, UploadHeapManager* uploadHeap) noexcept;
+                  PsoCache* psoCache, TransformDoubleBuffer* transformBuffer, UploadHeapManager* uploadHeap,
+                  FrameAllocator& frameArena) noexcept;
 
     RenderContext(const RenderContext&) = delete;
     RenderContext& operator=(const RenderContext&) = delete;
@@ -49,6 +55,11 @@ public:
     [[nodiscard]] PsoCache*              GetPsoCache() const noexcept { return psoCache_; }
     [[nodiscard]] TransformDoubleBuffer* GetTransformBuffer() const noexcept { return transformBuffer_; }
     [[nodiscard]] UploadHeapManager*     GetUploadHeap() const noexcept { return uploadHeap_; }
+
+    /// @brief Per-frame bump arena shared across every view in the current render-thread
+    ///        iteration. Allocations stay valid until the next frame's reset; do NOT use
+    ///        for storage that needs to survive past the end of Execute.
+    [[nodiscard]] FrameAllocator& GetFrameArena() const noexcept { return frameArena_; }
 
     /// @brief Returns the bindless slot of the currently-readable transform half. A path
     ///        forwards this as a push constant so its shaders can index into the SSBO.
@@ -82,6 +93,7 @@ private:
     PsoCache*              psoCache_{nullptr};
     TransformDoubleBuffer* transformBuffer_{nullptr};
     UploadHeapManager*     uploadHeap_{nullptr};
+    FrameAllocator&        frameArena_;
 };
 
 } // namespace Hylux::Renderer

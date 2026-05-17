@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "Core/Utils/Hash.h"
+
 #include <cstdint>
 #include <functional>
 
@@ -29,16 +31,11 @@ struct PsoKeyHasher
 {
     [[nodiscard]] std::size_t operator()(const PsoKey& key) const noexcept
     {
-        // FNV1a-style combination across the four buckets; cheap and well-distributed.
-        std::uint64_t h = 1469598103934665603ull;
-        const auto    mix = [&](std::uint64_t v) {
-            h ^= v;
-            h *= 1099511628211ull;
-        };
-        mix(key.pipelineLayoutHash);
-        mix(key.shaderIdsHash);
-        mix(key.renderStateHash);
-        mix(key.formatAndMultiviewHash);
+        std::uint64_t h = Hash::Fnv1a64Offset;
+        h = Hash::Combine(h, key.pipelineLayoutHash);
+        h = Hash::Combine(h, key.shaderIdsHash);
+        h = Hash::Combine(h, key.renderStateHash);
+        h = Hash::Combine(h, key.formatAndMultiviewHash);
         return static_cast<std::size_t>(h);
     }
 };

@@ -22,39 +22,34 @@ namespace Hylux::Renderer
 namespace
 {
 
-inline std::uint64_t HashBytes(std::uint64_t seed, const void* data, std::size_t size) noexcept
-{
-    return Hash::Fnv1a64(static_cast<const char*>(data), size, seed);
-}
-
 inline std::uint64_t HashRenderState(const PipelineRenderState& state) noexcept
 {
     std::uint64_t h = Hash::Fnv1a64Offset;
-    h = HashBytes(h, &state.topology,     sizeof(state.topology));
-    h = HashBytes(h, &state.rasterizer,   sizeof(state.rasterizer));
-    h = HashBytes(h, &state.depthStencil, sizeof(state.depthStencil));
-    h = HashBytes(h, &state.blend,        sizeof(state.blend));
+    h = Hash::MixTrivial(h, state.topology);
+    h = Hash::MixTrivial(h, state.rasterizer);
+    h = Hash::MixTrivial(h, state.depthStencil);
+    h = Hash::MixTrivial(h, state.blend);
     for (const auto& binding : state.vertexInput.bindings)
     {
-        h = HashBytes(h, &binding, sizeof(binding));
+        h = Hash::MixTrivial(h, binding);
     }
     for (const auto& attribute : state.vertexInput.attributes)
     {
-        h = HashBytes(h, &attribute, sizeof(attribute));
+        h = Hash::MixTrivial(h, attribute);
     }
     return h;
 }
 
 inline std::uint64_t HashFormatKey(const PsoFormatKey& key) noexcept
 {
-    return HashBytes(Hash::Fnv1a64Offset, &key, sizeof(key));
+    return Hash::MixTrivial(Hash::Fnv1a64Offset, key);
 }
 
 inline std::uint64_t HashShaderIds(const Shader::ShaderRef& vs, const Shader::ShaderRef& ps) noexcept
 {
     std::uint64_t h = Hash::Fnv1a64Offset;
-    h = HashBytes(h, &vs.id.value, sizeof(vs.id.value));
-    h = HashBytes(h, &ps.id.value, sizeof(ps.id.value));
+    h = Hash::MixU64(h, vs.id.value);
+    h = Hash::MixU64(h, ps.id.value);
     return h;
 }
 
@@ -63,9 +58,9 @@ inline std::uint64_t HashShaderIds(const Shader::ShaderRef& vs, const Shader::Sh
 inline std::uint64_t HashFailureSignature(const PsoRequest& req) noexcept
 {
     std::uint64_t h = Hash::Fnv1a64Offset;
-    h = HashBytes(h, &req.passNameHash,      sizeof(req.passNameHash));
-    h = HashBytes(h, &req.permutationKey,    sizeof(req.permutationKey));
-    h = HashBytes(h, &req.materialAssetHash, sizeof(req.materialAssetHash));
+    h = Hash::MixU64(h, req.passNameHash);
+    h = Hash::MixU64(h, req.permutationKey);
+    h = Hash::MixU64(h, req.materialAssetHash);
     return h;
 }
 

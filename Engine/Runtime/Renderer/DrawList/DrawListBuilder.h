@@ -6,12 +6,18 @@
 
 #pragma once
 
+#include "Core/Containers/SmallVector.h"
 #include "Renderer/DrawList/DrawList.h"
 #include "Renderer/DrawList/DrawListDesc.h"
 #include "Renderer/Proxy/PrimitiveProxy.h"
 
 #include <functional>
 #include <memory>
+
+namespace Hylux
+{
+class FrameAllocator;
+}
 
 namespace Hylux::Renderer
 {
@@ -39,6 +45,7 @@ public:
                     TransformDoubleBuffer* transformBuffer,
                     const SceneView*       view,
                     UploadHeapManager*     uploadHeap,
+                    FrameAllocator*        frameArena,
                     DrawListDesc           desc) noexcept;
 
     DrawListBuilder(const DrawListBuilder&)            = delete;
@@ -61,13 +68,14 @@ public:
     [[nodiscard]] std::unique_ptr<DrawList> Build();
 
 private:
-    const ProxyRegistry*   proxies_{nullptr};
-    TransformDoubleBuffer* transformBuffer_{nullptr};
-    const SceneView*       view_{nullptr};
-    UploadHeapManager*     uploadHeap_{nullptr};
-    DrawListDesc           desc_{};
-    DrawFilterFn           filter_;
-    InstanceUploadFn       uploadFn_;
+    const ProxyRegistry*           proxies_{nullptr};
+    TransformDoubleBuffer*         transformBuffer_{nullptr};
+    const SceneView*               view_{nullptr};
+    UploadHeapManager*             uploadHeap_{nullptr};
+    FrameAllocator*                frameArena_{nullptr};
+    DrawListDesc                   desc_{};
+    SmallVector<DrawFilterFn, 4>   filters_;
+    InstanceUploadFn               uploadFn_;
 };
 
 } // namespace Hylux::Renderer

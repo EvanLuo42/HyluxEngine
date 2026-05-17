@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "Core/Memory/FrameAllocator.h"
 #include "Core/Memory/Ref.h"
 #include "RHI/IRHICommandPool.h"
 #include "Renderer/Diagnostics/RendererStats.h"
@@ -15,9 +16,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
+
+namespace Hylux::RG::Internal
+{
+class RGTransientResourcePool;
+}
 
 namespace Hylux::RHI
 {
@@ -77,7 +84,8 @@ private:
     void Run();
     void DispatchMutation(const StructuralCommand& command);
     void RenderFrame(const BeginFrameCmd& begin, std::uint64_t renderFrameId,
-                     RHI::IRHICommandList& cmd) const;
+                     RHI::IRHICommandList& cmd, FrameAllocator& frameArena,
+                     RG::Internal::RGTransientResourcePool& transientPool) const;
 
     Deps                                   deps_;
     Ref<RHI::IRHICommandPool>              commandPool_;
@@ -87,6 +95,15 @@ private:
     std::vector<std::uint64_t>             slotFenceValues_;
     BeginFrameCmd                          cachedBegin_{};
     bool                                   hasCachedBegin_{false};
+
+    /// @brief Per-frame bump arena reset at the top of each rendered frame. Owned by the
+    ///        render thread; only the render thread allocates from it. Default chunk size
+    ///        256 KiB — grows automatically on overflow, never shrinks.
+    FrameAllocator frameArena_{256 * 1024};
+
+    /// @brief Cross-frame transient texture/buffer pool. Lazy-initialized in Run() once
+    ///        the device and framesInFlight are known.
+    std::unique_ptr<RG::Internal::RGTransientResourcePool> transientPool_;
 
     std::thread       thread_;
     std::atomic<bool> started_{false};

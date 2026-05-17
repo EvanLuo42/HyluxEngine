@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "Core/Utils/Flags.h"
 #include "RHI/RHIEnums.h"
 #include "RHI/RHIForward.h"
 #include "RHI/RHITypes.h"
@@ -45,17 +46,7 @@ enum class PipelineStageMask : std::uint64_t
     BottomOfPipe               = 1ull << 24,
 };
 
-[[nodiscard]] constexpr PipelineStageMask operator|(PipelineStageMask a, PipelineStageMask b) noexcept
-{
-    return static_cast<PipelineStageMask>(static_cast<std::uint64_t>(a) | static_cast<std::uint64_t>(b));
-}
-
-[[nodiscard]] constexpr PipelineStageMask operator&(PipelineStageMask a, PipelineStageMask b) noexcept
-{
-    return static_cast<PipelineStageMask>(static_cast<std::uint64_t>(a) & static_cast<std::uint64_t>(b));
-}
-
-constexpr PipelineStageMask& operator|=(PipelineStageMask& a, PipelineStageMask b) noexcept { a = a | b; return a; }
+HYLUX_ENABLE_BITFLAGS(PipelineStageMask)
 
 /// @brief Bit flags for memory access kinds, paired with PipelineStageMask in barriers.
 ///        Mirrors VkAccessFlags2 and D3D12_BARRIER_ACCESS bit semantics.
@@ -84,17 +75,7 @@ enum class AccessMask : std::uint64_t
     MemoryWrite                   = 1ull << 19,
 };
 
-[[nodiscard]] constexpr AccessMask operator|(AccessMask a, AccessMask b) noexcept
-{
-    return static_cast<AccessMask>(static_cast<std::uint64_t>(a) | static_cast<std::uint64_t>(b));
-}
-
-[[nodiscard]] constexpr AccessMask operator&(AccessMask a, AccessMask b) noexcept
-{
-    return static_cast<AccessMask>(static_cast<std::uint64_t>(a) & static_cast<std::uint64_t>(b));
-}
-
-constexpr AccessMask& operator|=(AccessMask& a, AccessMask b) noexcept { a = a | b; return a; }
+HYLUX_ENABLE_BITFLAGS(AccessMask)
 
 /// @brief Reserved queue family index used when no queue ownership transfer is performed.
 inline constexpr std::uint32_t kQueueFamilyIgnored = 0xFFFFFFFFu;

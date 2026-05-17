@@ -55,47 +55,14 @@ struct ShaderId
     }
 };
 
-namespace Detail
-{
-
-[[nodiscard]] inline std::uint64_t MixU64(std::uint64_t seed, std::uint64_t value) noexcept
-{
-    char bytes[8];
-    for (std::size_t i = 0; i < 8; ++i)
-    {
-        bytes[i] = static_cast<char>(value & 0xFFu);
-        value >>= 8;
-    }
-    return Hash::Fnv1a64(bytes, sizeof(bytes), seed);
-}
-
-[[nodiscard]] inline std::uint64_t MixU32(std::uint64_t seed, std::uint32_t value) noexcept
-{
-    char bytes[4];
-    for (std::size_t i = 0; i < 4; ++i)
-    {
-        bytes[i] = static_cast<char>(value & 0xFFu);
-        value >>= 8;
-    }
-    return Hash::Fnv1a64(bytes, sizeof(bytes), seed);
-}
-
-[[nodiscard]] inline std::uint64_t MixU8(std::uint64_t seed, std::uint8_t value) noexcept
-{
-    const char b = static_cast<char>(value);
-    return Hash::Fnv1a64(&b, 1, seed);
-}
-
-} // namespace Detail
-
 /// @brief Computes the ShaderId for a pass shader entry.
 [[nodiscard]] inline ShaderId MakeShaderId(const PassShaderKey& key) noexcept
 {
     std::uint64_t h = Hash::Fnv1a64Offset;
-    h = Detail::MixU8(h, static_cast<std::uint8_t>(ShaderCategory::Pass));
-    h = Detail::MixU64(h, key.passNameHash);
-    h = Detail::MixU64(h, key.permutationKey);
-    h = Detail::MixU32(h, static_cast<std::uint32_t>(key.stage));
+    h = Hash::MixU8(h, static_cast<std::uint8_t>(ShaderCategory::Pass));
+    h = Hash::MixU64(h, key.passNameHash);
+    h = Hash::MixU64(h, key.permutationKey);
+    h = Hash::MixU32(h, static_cast<std::uint32_t>(key.stage));
     return ShaderId{h};
 }
 
@@ -103,11 +70,11 @@ namespace Detail
 [[nodiscard]] inline ShaderId MakeShaderId(const MaterialShaderKey& key) noexcept
 {
     std::uint64_t h = Hash::Fnv1a64Offset;
-    h = Detail::MixU8(h, static_cast<std::uint8_t>(ShaderCategory::Material));
-    h = Detail::MixU64(h, key.materialAssetHash);
-    h = Detail::MixU64(h, key.passIdHash);
-    h = Detail::MixU64(h, key.permutationKey);
-    h = Detail::MixU32(h, static_cast<std::uint32_t>(key.stage));
+    h = Hash::MixU8(h, static_cast<std::uint8_t>(ShaderCategory::Material));
+    h = Hash::MixU64(h, key.materialAssetHash);
+    h = Hash::MixU64(h, key.passIdHash);
+    h = Hash::MixU64(h, key.permutationKey);
+    h = Hash::MixU32(h, static_cast<std::uint32_t>(key.stage));
     return ShaderId{h};
 }
 

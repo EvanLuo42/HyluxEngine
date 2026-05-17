@@ -15,6 +15,7 @@
 #include "RenderGraph/RGAccess.h"
 
 #include <cstdint>
+#include <memory_resource>
 #include <optional>
 #include <string>
 #include <vector>
@@ -115,24 +116,38 @@ struct RGDepthAttachmentRecord
 
 /// @brief Internal record of a pass: the owning class pointer plus everything Setup recorded
 ///        through its builder. Barriers are populated during Compile.
+///
+///        Every per-pass list lives inside a std::pmr::vector so the owning RenderGraph can
+///        thread its frame arena down. The default constructor falls back to the default
+///        heap resource; the explicit-resource constructor is the one AddPass uses.
 struct RGPassNode
 {
-    std::string                          name;
-    RGPass*                              pass{nullptr};
-    bool                                 isRaster{false};
-    bool                                 isSideEffect{false};
-    bool                                 isAlive{true};
+    RGPassNode() noexcept = default;
 
-    std::vector<RGTextureAccessRecord>   textureAccesses;
-    std::vector<RGBufferAccessRecord>    bufferAccesses;
+    explicit RGPassNode(std::pmr::memory_resource* resource) noexcept
+        : textureAccesses(resource),
+          bufferAccesses(resource),
+          colorAttachments(resource),
+          preludeTextureBarriers(resource),
+          preludeBufferBarriers(resource)
+    {}
 
-    std::vector<RGColorAttachmentRecord> colorAttachments;
-    RGDepthAttachmentRecord              depthAttachment{};
-    RHI::Rect2D                          renderArea{};
-    bool                                 renderAreaSet{false};
+    std::string                               name;
+    RGPass*                                   pass{nullptr};
+    bool                                      isRaster{false};
+    bool                                      isSideEffect{false};
+    bool                                      isAlive{true};
 
-    std::vector<RHI::TextureBarrier>     preludeTextureBarriers;
-    std::vector<RHI::BufferBarrier>      preludeBufferBarriers;
+    std::pmr::vector<RGTextureAccessRecord>   textureAccesses;
+    std::pmr::vector<RGBufferAccessRecord>    bufferAccesses;
+
+    std::pmr::vector<RGColorAttachmentRecord> colorAttachments;
+    RGDepthAttachmentRecord                   depthAttachment{};
+    RHI::Rect2D                               renderArea{};
+    bool                                      renderAreaSet{false};
+
+    std::pmr::vector<RHI::TextureBarrier>     preludeTextureBarriers;
+    std::pmr::vector<RHI::BufferBarrier>      preludeBufferBarriers;
 };
 
 } // namespace Internal

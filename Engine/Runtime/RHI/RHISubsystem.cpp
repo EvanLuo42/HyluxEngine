@@ -59,8 +59,7 @@ void RHISubsystem::Initialize(Engine& /*engine*/)
 
     if (deviceDesc_.rhiValidation != RhiValidationLevel::Off)
     {
-        HYLUX_LOG(LogRender, Info, "RHISubsystem: wrapping device with RHI validation layer level={}",
-                  static_cast<std::uint32_t>(deviceDesc_.rhiValidation));
+        // The wrapper logs its own Warn about being a stub; do not double-log here.
         device_ = CreateRhiValidationWrapper(std::move(innerDevice), deviceDesc_.rhiValidation);
     }
     else

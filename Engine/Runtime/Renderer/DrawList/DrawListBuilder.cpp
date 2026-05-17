@@ -7,12 +7,14 @@
 #include "Renderer/DrawList/DrawListBuilder.h"
 
 #include "Core/Math/Vec3.h"
+#include "Core/Memory/FrameAllocator.h"
 #include "Renderer/Proxy/ProxyRegistry.h"
 #include "Renderer/Thread/TransformDoubleBuffer.h"
 #include "Renderer/Upload/UploadHeapManager.h"
 #include "Renderer/View/SceneView.h"
 
 #include <cstring>
+#include <memory_resource>
 #include <utility>
 
 namespace Hylux::Renderer
@@ -28,27 +30,17 @@ constexpr std::uint32_t kDrawIndirectStride = sizeof(std::uint32_t) * 4;
 } // namespace
 
 DrawListBuilder::DrawListBuilder(const ProxyRegistry* proxies, TransformDoubleBuffer* transformBuffer,
-                                 const SceneView* view, UploadHeapManager* uploadHeap, DrawListDesc desc) noexcept
-    : proxies_(proxies), transformBuffer_(transformBuffer), view_(view), uploadHeap_(uploadHeap), desc_(std::move(desc))
+                                 const SceneView* view, UploadHeapManager* uploadHeap, FrameAllocator* frameArena,
+                                 DrawListDesc desc) noexcept
+    : proxies_(proxies), transformBuffer_(transformBuffer), view_(view), uploadHeap_(uploadHeap),
+      frameArena_(frameArena), desc_(std::move(desc))
 {}
 
 DrawListBuilder& DrawListBuilder::WithCustomFilter(DrawFilterFn filter)
 {
-    if (!filter)
+    if (filter)
     {
-        return *this;
-    }
-    if (!filter_)
-    {
-        filter_ = std::move(filter);
-    }
-    else
-    {
-        auto previous = std::move(filter_);
-        auto next = std::move(filter);
-        filter_ = [prev = std::move(previous), nxt = std::move(next)](const PrimitiveProxy& p) {
-            return prev(p) && nxt(p);
-        };
+        filters_.PushBack(std::move(filter));
     }
     return *this;
 }
@@ -67,7 +59,16 @@ std::unique_ptr<DrawList> DrawListBuilder::Build()
                                                 ? transformBuffer_->AcquireReadHalfBindlessIndex(0)
                                                 : TransformDoubleBuffer::kInvalidHalfIndex;
 
-    std::vector<ProxyId> survivors;
+    // Scratch list of surviving proxy ids. Backed by the frame arena when one is provided
+    // (allocations live until next frame's FrameAllocator::Reset and never hit malloc);
+    // falls back to the default heap resource when DrawListBuilder is used without a
+    // RenderContext (e.g. unit tests). Copied — not moved — into DrawList::survivors_ so
+    // the long-lived storage on DrawList stays std::vector and does not depend on the
+    // arena's lifetime.
+    std::pmr::memory_resource* survivorsResource = frameArena_ != nullptr
+                                                       ? frameArena_->GetMemoryResource()
+                                                       : std::pmr::get_default_resource();
+    std::pmr::vector<ProxyId>  survivors{survivorsResource};
     if (proxies_ != nullptr)
     {
         const auto& entries = proxies_->Entries();
@@ -91,7 +92,12 @@ std::unique_ptr<DrawList> DrawListBuilder::Build()
                     continue;
                 }
             }
-            if (filter_ && !filter_(proxy))
+            bool filtered = false;
+            for (const auto& fn : filters_)
+            {
+                if (!fn(proxy)) { filtered = true; break; }
+            }
+            if (filtered)
             {
                 continue;
             }
@@ -169,7 +175,9 @@ std::unique_ptr<DrawList> DrawListBuilder::Build()
 
     list->SetCollected(drawCount, instanceBuffer, instanceBindless, indirectArgs, indirectCount, transformBindless);
     list->SetBufferOffsets(argsOffset, countOffset, instanceOffset);
-    list->SetSurvivors(std::move(survivors));
+    // Copy out of arena-backed pmr storage into the std::vector owned by DrawList. One
+    // allocation sized to drawCount (vs the over-reserved entries.size() in the old path).
+    list->SetSurvivors(std::vector<ProxyId>(survivors.begin(), survivors.end()));
     return list;
 }
 

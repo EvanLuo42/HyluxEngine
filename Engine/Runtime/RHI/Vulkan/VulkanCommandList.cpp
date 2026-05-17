@@ -5,6 +5,9 @@
 
 #include "RHI/Vulkan/VulkanCommandList.h"
 
+#include "Core/Containers/SmallVector.h"
+#include "Core/Logging/CoreLogCategories.h"
+#include "Core/Logging/Logger.h"
 #include "RHI/Capture/IGraphicsCaptureTool.h"
 #include "RHI/Diagnostics/IGpuCrashReporter.h"
 #include "RHI/IRHIBuffer.h"
@@ -18,6 +21,7 @@
 #include "RHI/Vulkan/VulkanPipeline.h"
 #include "RHI/Vulkan/VulkanTexture.h"
 
+#include <atomic>
 #include <cstring>
 
 namespace Hylux::RHI::Vulkan
@@ -84,12 +88,12 @@ bool VulkanCommandList::Reset()
 
 void VulkanCommandList::Barrier(const BarrierGroup& barriers)
 {
-    std::vector<VkMemoryBarrier2>       mem;
-    std::vector<VkBufferMemoryBarrier2> buf;
-    std::vector<VkImageMemoryBarrier2>  img;
-    mem.reserve(barriers.memory.size());
-    buf.reserve(barriers.buffers.size());
-    img.reserve(barriers.textures.size());
+    SmallVector<VkMemoryBarrier2, 4>       mem;
+    SmallVector<VkBufferMemoryBarrier2, 8> buf;
+    SmallVector<VkImageMemoryBarrier2, 8>  img;
+    mem.Reserve(barriers.memory.size());
+    buf.Reserve(barriers.buffers.size());
+    img.Reserve(barriers.textures.size());
 
     for (const auto& m : barriers.memory)
     {
@@ -99,7 +103,7 @@ void VulkanCommandList::Barrier(const BarrierGroup& barriers)
         b.srcAccessMask = ToVkAccessFlags(m.srcAccess);
         b.dstStageMask  = ToVkPipelineStages(m.dstStages);
         b.dstAccessMask = ToVkAccessFlags(m.dstAccess);
-        mem.push_back(b);
+        mem.PushBack(b);
     }
     for (const auto& bb : barriers.buffers)
     {
@@ -114,7 +118,7 @@ void VulkanCommandList::Barrier(const BarrierGroup& barriers)
         b.buffer              = static_cast<VulkanBuffer*>(bb.buffer)->GetVkBuffer();
         b.offset              = bb.offset;
         b.size                = bb.size;
-        buf.push_back(b);
+        buf.PushBack(b);
     }
     for (const auto& tb : barriers.textures)
     {
@@ -135,7 +139,7 @@ void VulkanCommandList::Barrier(const BarrierGroup& barriers)
         b.subresourceRange.levelCount     = tb.range.mipLevelCount;
         b.subresourceRange.baseArrayLayer = tb.range.baseArrayLayer;
         b.subresourceRange.layerCount     = tb.range.arrayLayerCount;
-        img.push_back(b);
+        img.PushBack(b);
     }
 
     VkDependencyInfo dep{};
@@ -152,8 +156,8 @@ void VulkanCommandList::Barrier(const BarrierGroup& barriers)
 
 void VulkanCommandList::BeginRendering(const RenderingInfo& info)
 {
-    std::vector<VkRenderingAttachmentInfo> colorAtts;
-    colorAtts.reserve(info.colorAttachments.size());
+    SmallVector<VkRenderingAttachmentInfo, 8> colorAtts;
+    colorAtts.Reserve(info.colorAttachments.size());
     for (const auto& a : info.colorAttachments)
     {
         VkRenderingAttachmentInfo va{};
@@ -166,7 +170,7 @@ void VulkanCommandList::BeginRendering(const RenderingInfo& info)
         va.clearValue.color.float32[1] = a.clearValue.color.g;
         va.clearValue.color.float32[2] = a.clearValue.color.b;
         va.clearValue.color.float32[3] = a.clearValue.color.a;
-        colorAtts.push_back(va);
+        colorAtts.PushBack(va);
     }
 
     VkRenderingAttachmentInfo depthAtt{};
@@ -220,28 +224,28 @@ void VulkanCommandList::SetPipelineLayout(IRHIPipelineLayout* /*layout*/) {}
 
 void VulkanCommandList::SetViewports(std::span<const Viewport> viewports)
 {
-    std::vector<VkViewport> vp;
-    vp.reserve(viewports.size());
+    SmallVector<VkViewport, 4> vp;
+    vp.Reserve(viewports.size());
     for (const auto& v : viewports)
     {
         VkViewport x{};
         x.x = v.x; x.y = v.y; x.width = v.width; x.height = v.height;
         x.minDepth = v.minDepth; x.maxDepth = v.maxDepth;
-        vp.push_back(x);
+        vp.PushBack(x);
     }
     vkCmdSetViewport(cmd_, 0, static_cast<std::uint32_t>(vp.size()), vp.data());
 }
 
 void VulkanCommandList::SetScissors(std::span<const Rect2D> scissors)
 {
-    std::vector<VkRect2D> rs;
-    rs.reserve(scissors.size());
+    SmallVector<VkRect2D, 4> rs;
+    rs.Reserve(scissors.size());
     for (const auto& s : scissors)
     {
         VkRect2D r{};
         r.offset.x = s.offset.x; r.offset.y = s.offset.y;
         r.extent.width = s.extent.width; r.extent.height = s.extent.height;
-        rs.push_back(r);
+        rs.PushBack(r);
     }
     vkCmdSetScissor(cmd_, 0, static_cast<std::uint32_t>(rs.size()), rs.data());
 }
@@ -259,14 +263,14 @@ void VulkanCommandList::SetStencilReference(std::uint32_t reference)
 void VulkanCommandList::SetVertexBuffers(std::uint32_t firstBinding,
                                          std::span<const VertexBufferBinding> bindings)
 {
-    std::vector<VkBuffer>     bufs;
-    std::vector<VkDeviceSize> offs;
-    bufs.reserve(bindings.size());
-    offs.reserve(bindings.size());
+    SmallVector<VkBuffer, 4>     bufs;
+    SmallVector<VkDeviceSize, 4> offs;
+    bufs.Reserve(bindings.size());
+    offs.Reserve(bindings.size());
     for (const auto& b : bindings)
     {
-        bufs.push_back(static_cast<VulkanBuffer*>(b.buffer)->GetVkBuffer());
-        offs.push_back(b.offset);
+        bufs.PushBack(static_cast<VulkanBuffer*>(b.buffer)->GetVkBuffer());
+        offs.PushBack(b.offset);
     }
     vkCmdBindVertexBuffers(cmd_, firstBinding,
                            static_cast<std::uint32_t>(bufs.size()),
@@ -342,9 +346,26 @@ void VulkanCommandList::DispatchMeshIndirect(IRHIBuffer* args, std::uint64_t off
                                       off, draws, stride);
 }
 
-void VulkanCommandList::DispatchRays(const DispatchRaysDesc& /*desc*/) { /* TODO */ }
+void VulkanCommandList::DispatchRays(const DispatchRaysDesc& /*desc*/)
+{
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed))
+    {
+        HYLUX_LOG(::Hylux::LogRender, Error,
+                  "VulkanCommandList::DispatchRays not implemented; call dropped");
+    }
+}
+
 void VulkanCommandList::BuildAccelerationStructures(
-    std::span<const AccelerationStructureBuildDesc> /*builds*/) { /* TODO */ }
+    std::span<const AccelerationStructureBuildDesc> /*builds*/)
+{
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed))
+    {
+        HYLUX_LOG(::Hylux::LogRender, Error,
+                  "VulkanCommandList::BuildAccelerationStructures not implemented; call dropped");
+    }
+}
 
 void VulkanCommandList::CopyBuffer(IRHIBuffer* dst, std::uint64_t dstO,
                                    IRHIBuffer* src, std::uint64_t srcO, std::uint64_t size)
@@ -432,7 +453,15 @@ void VulkanCommandList::ClearDepthStencil(IRHITextureView* view, float depth, st
 }
 
 void VulkanCommandList::ResolveTexture(IRHITexture* /*dst*/, IRHITexture* /*src*/,
-                                       const ResolveDesc& /*desc*/) { /* TODO */ }
+                                       const ResolveDesc& /*desc*/)
+{
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed))
+    {
+        HYLUX_LOG(::Hylux::LogRender, Error,
+                  "VulkanCommandList::ResolveTexture not implemented; call dropped");
+    }
+}
 
 void VulkanCommandList::BeginQuery(IRHIQueryPool* /*pool*/, std::uint32_t /*index*/) {}
 void VulkanCommandList::EndQuery(IRHIQueryPool* /*pool*/, std::uint32_t /*index*/) {}

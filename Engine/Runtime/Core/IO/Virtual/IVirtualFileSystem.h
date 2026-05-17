@@ -6,6 +6,7 @@
 #include "Core/IO/IFileSystem.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -61,6 +62,15 @@ public:
     /// @brief Returns a read-only snapshot of the active mount table, ordered as resolution sees
     ///        them (longest prefix, then highest priority, then newest mount first).
     [[nodiscard]] virtual std::vector<MountInfo> EnumerateMounts() const = 0;
+
+    /// @brief Walks every regular file visible through the mount whose prefix equals @p mountPrefix
+    ///        (e.g. "/Engine/"). When @p recursive is true, descends into subdirectories. The
+    ///        visitor is invoked once per file with a *full* virtual path (e.g. "/Engine/Foo.hass")
+    ///        and the file's FileStat. Files shadowed by higher-priority mounts at the same prefix
+    ///        are visited only via the winning provider — no duplicates per virtual path.
+    virtual void EnumerateFiles(std::string_view mountPrefix,
+                                bool             recursive,
+                                std::function<void(std::string_view virtualPath, const FileStat& stat)> visitor) const = 0;
 };
 
 } // namespace Hylux

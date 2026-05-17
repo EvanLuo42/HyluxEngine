@@ -33,6 +33,9 @@ public:
     FileStat               Stat(std::string_view subPath) const override;
     bool                   CreateDirectories(std::string_view subPath) override;
     bool                   Remove(std::string_view subPath) override;
+    void                   EnumerateFiles(std::string_view subRoot,
+                                          bool             recursive,
+                                          std::function<void(std::string_view, const FileStat&)> visitor) const override;
 
     [[nodiscard]] bool        SupportsWrite() const noexcept override { return true; }
     [[nodiscard]] const char* DebugName() const noexcept override { return debugName_.c_str(); }

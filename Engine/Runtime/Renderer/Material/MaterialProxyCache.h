@@ -14,6 +14,11 @@
 #include <memory>
 #include <unordered_map>
 
+namespace Hylux::RHI
+{
+class IRHIDevice;
+}
+
 namespace Hylux::Shader
 {
 class ShaderSubsystem;
@@ -22,13 +27,15 @@ class ShaderSubsystem;
 namespace Hylux::Renderer
 {
 
-/// @brief Render-thread proxy cache. Stage 6 stores snapshots as-is and does not yet
-///        allocate GPU uniform blocks or resolve texture bindless indices — those plug in
-///        when UploadHeapManager and the asset system land.
+/// @brief Render-thread proxy cache. Allocates a per-(assetHash, instanceHash) uniform
+///        buffer for the snapshot's uniform block and forwards the snapshot's
+///        pre-resolved bindless indices into the MaterialProxy. Texture residency is
+///        retained via Ref<TextureAsset> on the proxy so game-side MaterialInstance
+///        drops cannot leave the GPU side with stale bindless slots.
 class MaterialProxyCache
 {
 public:
-    explicit MaterialProxyCache(Shader::ShaderSubsystem* shaders) noexcept;
+    MaterialProxyCache(RHI::IRHIDevice* device, Shader::ShaderSubsystem* shaders) noexcept;
 
     MaterialProxyCache(const MaterialProxyCache&)            = delete;
     MaterialProxyCache& operator=(const MaterialProxyCache&) = delete;
@@ -60,7 +67,8 @@ private:
         }
     };
 
-    Shader::ShaderSubsystem*                                       shaders_{nullptr};
+    RHI::IRHIDevice*                                                 device_{nullptr};
+    Shader::ShaderSubsystem*                                         shaders_{nullptr};
     std::unordered_map<Key, std::unique_ptr<MaterialProxy>, KeyHash> entries_;
 };
 

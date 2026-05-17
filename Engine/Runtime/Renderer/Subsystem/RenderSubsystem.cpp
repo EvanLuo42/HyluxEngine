@@ -7,9 +7,9 @@
 #include "RHI/IRHIPipelineCache.h"
 #include "RHI/IRHIQueue.h"
 #include "RHI/RHISubsystem.h"
+#include "Asset/Types/MeshAsset.h"
 #include "Renderer/Material/MaterialInstance.h"
 #include "Renderer/Material/MaterialProxyCache.h"
-#include "Renderer/Mesh/MeshAsset.h"
 #include "Renderer/Path/IRenderPath.h"
 #include "Renderer/Path/RenderResources.h"
 #include "Renderer/Proxy/ProxyRegistry.h"
@@ -117,7 +117,7 @@ void RenderSubsystem::Initialize(Engine& engine)
     }
 
     resources_ = std::make_unique<RenderResources>(device_);
-    materials_ = std::make_unique<MaterialProxyCache>(shaders_);
+    materials_ = std::make_unique<MaterialProxyCache>(device_, shaders_);
     timeline_ = std::make_unique<FrameFenceTimeline>(config_.framesInFlight);
     cmdQueue_ = std::make_unique<StructuralCommandQueue>();
 
@@ -244,9 +244,9 @@ ProxyId RenderSubsystem::SpawnPrimitive(const PrimitiveSpawnDesc& desc) const
 
     if (desc.mesh != nullptr)
     {
-        cmdQueue_->Enqueue(AssignMeshCmd{id, desc.mesh->GetHandle()});
+        cmdQueue_->Enqueue(AssignMeshCmd{id, desc.mesh->GetGuid().Hash()});
 
-        const auto& [minX, minY, minZ, maxX, maxY, maxZ] = desc.mesh->GetLocalBounds();
+        const auto& [minX, minY, minZ, maxX, maxY, maxZ] = desc.mesh->LocalBounds();
         SetBoundsCmd boundsCmd{};
         boundsCmd.id = id;
         boundsCmd.minX = minX;

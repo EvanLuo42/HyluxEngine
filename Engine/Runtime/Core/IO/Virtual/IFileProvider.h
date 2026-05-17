@@ -5,6 +5,7 @@
 
 #include "Core/IO/FileMode.h"
 
+#include <functional>
 #include <memory>
 #include <string_view>
 
@@ -44,6 +45,14 @@ public:
 
     /// @brief Removes the file or empty directory at @p subPath. Read-only providers return false.
     virtual bool Remove(std::string_view subPath) = 0;
+
+    /// @brief Walks every regular file under @p subRoot (forward-slash relative path, "" for
+    ///        the provider's root). When @p recursive is true, descends into subdirectories.
+    ///        The visitor is invoked once per file with a path relative to the provider root
+    ///        (no leading slash) and a populated FileStat. Order is unspecified.
+    virtual void EnumerateFiles(std::string_view subRoot,
+                                bool             recursive,
+                                std::function<void(std::string_view subPath, const FileStat& stat)> visitor) const = 0;
 
     /// @brief Returns true if this provider accepts write/append/read-write opens.
     [[nodiscard]] virtual bool SupportsWrite() const noexcept = 0;

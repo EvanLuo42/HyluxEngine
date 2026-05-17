@@ -66,18 +66,10 @@ struct TransformGpuRecord;
 //       Renderer/Thread/TransformDoubleBuffer.h (or Core/Math/Mat3x4.h) directly.
 
 // Material
-enum class NameHash : std::uint64_t;
-enum class ParameterKind : std::uint8_t;
-struct ParameterValue;
-struct ParameterDesc;
 struct MaterialSnapshot;
-class MaterialAsset;
 class MaterialInstance;
 class MaterialProxy;
 class MaterialProxyCache;
-
-// Mesh
-class MeshAsset;
 
 // Upload
 class UploadHeapManager;

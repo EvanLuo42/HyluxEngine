@@ -42,6 +42,9 @@ public:
                                  std::int32_t priority) override;
     bool                   Unmount(MountId id) override;
     std::vector<MountInfo> EnumerateMounts() const override;
+    void                   EnumerateFiles(std::string_view mountPrefix,
+                                          bool             recursive,
+                                          std::function<void(std::string_view, const FileStat&)> visitor) const override;
 
     std::unique_ptr<IFile> Open(std::string_view path, FileOpenMode mode) override;
     bool                   Exists(std::string_view path) const override;

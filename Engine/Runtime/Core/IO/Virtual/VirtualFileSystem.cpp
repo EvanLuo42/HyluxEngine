@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <unordered_set>
 
 namespace Hylux
 {
@@ -72,6 +73,39 @@ std::vector<MountInfo> VirtualFileSystem::EnumerateMounts() const
                                 m.provider ? m.provider->DebugName() : nullptr});
     }
     return out;
+}
+
+void VirtualFileSystem::EnumerateFiles(std::string_view mountPrefix, bool recursive,
+                                       std::function<void(std::string_view, const FileStat&)> visitor) const
+{
+    if (!visitor || !VirtualPath::IsValidMountPrefix(mountPrefix))
+    {
+        return;
+    }
+
+    std::unordered_set<std::string> seenVirtual;
+
+    for (const auto& mount : mounts_)
+    {
+        if (mount.prefix != mountPrefix || !mount.provider)
+        {
+            continue;
+        }
+        mount.provider->EnumerateFiles({}, recursive,
+                                       [&](std::string_view sub, const FileStat& stat) {
+                                           std::string virtualPath = mount.prefix;
+                                           if (!virtualPath.empty() && virtualPath.back() != '/')
+                                           {
+                                               virtualPath.push_back('/');
+                                           }
+                                           virtualPath.append(sub);
+                                           if (!seenVirtual.insert(virtualPath).second)
+                                           {
+                                               return;
+                                           }
+                                           visitor(virtualPath, stat);
+                                       });
+    }
 }
 
 void VirtualFileSystem::Resort()

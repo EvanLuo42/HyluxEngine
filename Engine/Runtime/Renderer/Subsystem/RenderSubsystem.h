@@ -39,6 +39,12 @@ namespace Hylux::Shader
 class ShaderSubsystem;
 }
 
+namespace Hylux::Asset
+{
+class MeshAsset;
+class MaterialInstance;
+} // namespace Hylux::Asset
+
 namespace Hylux::Renderer
 {
 
@@ -47,12 +53,13 @@ class RenderResources;
 struct SceneViewRequest;
 
 /// @brief Spawn-time payload. When `mesh` is non-null SpawnPrimitive auto-enqueues an
-///        AssignMesh command for the mesh handle plus a SetBounds command using the mesh's
-///        local AABB; callers may still override bounds afterwards with SetPrimitiveBounds.
+///        AssignMesh command for the mesh's stable handle plus a SetBounds command using
+///        the mesh's local AABB; callers may still override bounds afterwards with
+///        SetPrimitiveBounds.
 struct PrimitiveSpawnDesc
 {
-    std::uint32_t layerMask{0xFFFFFFFFu};
-    const MeshAsset* mesh{nullptr};
+    std::uint32_t            layerMask{0xFFFFFFFFu};
+    const Asset::MeshAsset*  mesh{nullptr};
 };
 
 /// @brief Top-level renderer subsystem. All public methods must be called from the same

@@ -134,6 +134,20 @@ public:
     bool CreateDirectories(std::string_view) override { return false; }
     bool Remove(std::string_view) override { return false; }
 
+    void EnumerateFiles(std::string_view, bool,
+                        std::function<void(std::string_view, const FileStat&)> visitor) const override
+    {
+        if (!visitor) return;
+        for (const auto& [name, contents] : files_)
+        {
+            FileStat s;
+            s.exists        = true;
+            s.isRegularFile = true;
+            s.size          = contents.size();
+            visitor(name, s);
+        }
+    }
+
     bool        SupportsWrite() const noexcept override { return false; }
     const char* DebugName() const noexcept override { return "MemoryReadOnly"; }
 

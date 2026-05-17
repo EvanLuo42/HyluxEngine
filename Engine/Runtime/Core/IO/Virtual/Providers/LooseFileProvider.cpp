@@ -70,4 +70,71 @@ bool LooseFileProvider::Remove(std::string_view subPath)
     return physical_ && physical_->Remove(Join(subPath));
 }
 
+void LooseFileProvider::EnumerateFiles(std::string_view subRoot, bool recursive,
+                                       std::function<void(std::string_view, const FileStat&)> visitor) const
+{
+    if (!visitor)
+    {
+        return;
+    }
+
+    const std::filesystem::path scanRoot =
+        subRoot.empty() ? rootDir_ : (rootDir_ / std::filesystem::path(std::string(subRoot)));
+
+    std::error_code rootEc;
+    if (!std::filesystem::exists(scanRoot, rootEc) || !std::filesystem::is_directory(scanRoot, rootEc))
+    {
+        return;
+    }
+
+    auto emit = [&](const std::filesystem::directory_entry& entry) {
+        std::error_code ec;
+        if (!entry.is_regular_file(ec))
+        {
+            return;
+        }
+        std::error_code relEc;
+        const auto      relPath = std::filesystem::relative(entry.path(), rootDir_, relEc);
+        if (relEc)
+        {
+            return;
+        }
+        std::string relStr = relPath.generic_string();
+
+        FileStat stat{};
+        stat.exists        = true;
+        stat.isRegularFile = true;
+        stat.isDirectory   = false;
+        stat.size          = static_cast<FileSize>(entry.file_size(ec));
+
+        visitor(relStr, stat);
+    };
+
+    std::error_code iterEc;
+    if (recursive)
+    {
+        for (std::filesystem::recursive_directory_iterator it(scanRoot, iterEc), end; it != end;
+             it.increment(iterEc))
+        {
+            if (iterEc)
+            {
+                return;
+            }
+            emit(*it);
+        }
+    }
+    else
+    {
+        for (std::filesystem::directory_iterator it(scanRoot, iterEc), end; it != end;
+             it.increment(iterEc))
+        {
+            if (iterEc)
+            {
+                return;
+            }
+            emit(*it);
+        }
+    }
+}
+
 } // namespace Hylux

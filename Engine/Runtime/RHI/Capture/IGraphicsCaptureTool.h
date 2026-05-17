@@ -94,7 +94,10 @@ public:
     [[nodiscard]] virtual std::string_view GetCapturePath(std::uint64_t requestId) const noexcept = 0;
 
     /// @brief Marks a frame boundary for headless workloads with no Present call.
-    virtual void FrameBoundary() = 0;
+    ///        Optional queue + output texture pin the boundary to a specific submission
+    ///        path and final image (used by capture SDKs that need both for frame
+    ///        delimitation and HUD compositing); pass nullptr for either when unknown.
+    virtual void FrameBoundary(IRHIQueue* queue = nullptr, IRHITexture* outputTexture = nullptr) = 0;
 
     /// @brief Pushes a named debug region on the command list. Routed by IRHICommandList
     ///        when a tool is loaded; not normally called directly by gameplay code.

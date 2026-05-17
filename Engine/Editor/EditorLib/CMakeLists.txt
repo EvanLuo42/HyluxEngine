@@ -14,9 +14,13 @@ target_include_directories(${HYLUX_EDITOR_LIB_TARGET}
 
 target_compile_features(${HYLUX_EDITOR_LIB_TARGET} PUBLIC cxx_std_20)
 
+find_package(slang CONFIG REQUIRED)
+
 target_link_libraries(${HYLUX_EDITOR_LIB_TARGET}
         PUBLIC
         Hylux::Runtime
+        PRIVATE
+        slang::slang
 )
 
 set_target_properties(${HYLUX_EDITOR_LIB_TARGET} PROPERTIES

@@ -6,16 +6,14 @@
 
 #include "Core/Memory/Ref.h"
 #include "RHI/IRHIObject.h"
-#include "RHI/RHIDeviceDesc.h"
+#include "RHI/IRHISurface.h"
 #include "RHI/RHIEnums.h"
 #include "RHI/RHIFeature.h"
 #include "RHI/RHIForward.h"
-#include "RHI/IRHISurface.h"
 #include "RHI/RHIPipelineDesc.h"
-#include "RHI/RHIResourceDesc.h"
-#include "RHI/RHIValidation.h"
 
 #include <cstdint>
+#include <string_view>
 
 namespace Hylux::RHI
 {
@@ -79,6 +77,12 @@ public:
     virtual Ref<IRHICommandPool> CreateCommandPool(QueueType type,
                                                    CommandPoolFlags flags = {}) = 0;
     virtual Ref<IRHIQueryPool>   CreateQueryPool(QueryType type, std::uint32_t count) = 0;
+
+    /// @brief Returns (and lazily creates) a backend pipeline cache identified by name.
+    ///        Names are arbitrary engine-side labels; the engine typically persists each
+    ///        cache to a single .psoblob file. Repeated calls with the same name return
+    ///        the same Ref.
+    [[nodiscard]] virtual Ref<IRHIPipelineCache> GetOrCreatePipelineCache(std::string_view name) = 0;
 
     virtual Ref<IRHISurface>   CreateSurface(const PlatformWindowHandle& window) = 0;
     virtual Ref<IRHISwapchain> CreateSwapchain(IRHISurface* surface,

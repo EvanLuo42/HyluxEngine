@@ -76,10 +76,16 @@ if (HYLUX_CRASH_AFTERMATH_ACTIVE)
         target_sources(${HYLUX_RUNTIME_TARGET} PRIVATE ${HYLUX_CRASH_AFTERMATH_SOURCES})
         target_link_libraries(${HYLUX_RUNTIME_TARGET} PRIVATE Nvidia::Aftermath)
         target_compile_definitions(${HYLUX_RUNTIME_TARGET} PUBLIC HYLUX_CRASH_AFTERMATH=1)
-        add_custom_command(TARGET ${HYLUX_RUNTIME_TARGET} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:Nvidia::Aftermath>
-                ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+        # Expose the absolute DLL path as a global property so any EXE that depends on the
+        # runtime can copy it next to its own binary via POST_BUILD. We do NOT attach the
+        # copy to HyluxRuntime: that is a STATIC library, and its POST_BUILD only fires
+        # when sources recompile — if the bin/ dir is cleaned but Runtime stays cached,
+        # the copy never re-runs and the EXE fails to start (missing DLL). Resolve the
+        # path at configure time (get_target_property → IMPORTED_LOCATION) rather than
+        # via $<TARGET_FILE:Nvidia::Aftermath>: the imported target lives in this
+        # directory scope and would not be visible to genex expansion in EXE subdirs.
+        get_target_property(_hylux_aftermath_dll Nvidia::Aftermath IMPORTED_LOCATION)
+        set_property(GLOBAL PROPERTY HYLUX_AFTERMATH_DLL_PATH "${_hylux_aftermath_dll}")
         source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} PREFIX "Source"
                      FILES ${HYLUX_CRASH_AFTERMATH_SOURCES})
     else ()
@@ -87,6 +93,21 @@ if (HYLUX_CRASH_AFTERMATH_ACTIVE)
                        "target not available; crash reporter will return null at runtime.")
     endif ()
 endif ()
+
+# Helper invoked by executable targets that depend (transitively) on Aftermath. Attaches
+# a POST_BUILD copy_if_different to the executable so the Aftermath DLL is guaranteed to
+# land next to the .exe on every build of that exe — not gated on the static runtime
+# being re-linked. Idempotent: silently skips when Aftermath isn't being built.
+function(hylux_copy_aftermath_dll_next_to TARGET_NAME)
+    get_property(_aftermath_dll GLOBAL PROPERTY HYLUX_AFTERMATH_DLL_PATH)
+    if (_aftermath_dll)
+        add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${_aftermath_dll}
+                $<TARGET_FILE_DIR:${TARGET_NAME}>
+            VERBATIM)
+    endif ()
+endfunction()
 
 set_target_properties(${HYLUX_RUNTIME_TARGET} PROPERTIES
     FOLDER "Hylux"

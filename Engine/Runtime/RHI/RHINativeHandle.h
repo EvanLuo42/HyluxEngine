@@ -28,6 +28,7 @@ enum class RHINativeHandleKind : std::uint32_t
     VkImageView,
     VkSampler,
     VkPipeline,
+    VkPipelineCache,
     VkPipelineLayout,
     VkDescriptorPool,
     VkDescriptorSetLayout,

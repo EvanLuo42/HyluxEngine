@@ -4,16 +4,18 @@
 
 #pragma once
 
-#include "RHI/Capture/IGraphicsCaptureTool.h"
 #include "RHI/Diagnostics/IGpuCrashReporter.h"
 #include "RHI/IRHIDevice.h"
+#include "RHI/RHIDeviceDesc.h"
 #include "RHI/Vulkan/VulkanBindlessHeap.h"
 #include "RHI/Vulkan/VulkanCommon.h"
-
-#include <vk_mem_alloc.h>
+#include "RHI/Vulkan/VulkanPipelineCache.h"
 
 #include <array>
+#include <string>
+#include <unordered_map>
 #include <vector>
+#include <vk_mem_alloc.h>
 
 namespace Hylux::RHI::Vulkan
 {
@@ -63,6 +65,8 @@ public:
     Ref<IRHIFence>       CreateFence(std::uint64_t initialValue = 0) override;
     Ref<IRHICommandPool> CreateCommandPool(QueueType type, CommandPoolFlags flags = {}) override;
     Ref<IRHIQueryPool>   CreateQueryPool(QueryType type, std::uint32_t count) override;
+
+    [[nodiscard]] Ref<IRHIPipelineCache> GetOrCreatePipelineCache(std::string_view name) override;
 
     Ref<IRHISurface>   CreateSurface(const PlatformWindowHandle& window) override;
     Ref<IRHISwapchain> CreateSwapchain(IRHISurface* surface, const SwapchainDesc& desc) override;
@@ -115,6 +119,8 @@ private:
     std::array<std::vector<Ref<VulkanQueue>>, static_cast<std::size_t>(QueueType::Count)> queues_;
 
     std::array<Ref<VulkanBindlessHeap>, static_cast<std::size_t>(BindlessKind::Count)> bindlessHeaps_;
+
+    std::unordered_map<std::string, Ref<VulkanPipelineCache>> pipelineCaches_;
 
     Ref<IGpuCrashReporter> crashReporter_;
     std::string            debugName_;

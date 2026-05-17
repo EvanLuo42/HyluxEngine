@@ -55,6 +55,15 @@ bool VulkanInstance::Initialize()
         return false;
     }
 
+#if defined(HYLUX_CAPTURE_NSIGHT)
+    // Unconditionally install the NGFX library-loader override before vkCreateInstance.
+    // Nsight Graphics's injected interception runtime can dispatch through NGFX entry
+    // points from inside the create-instance hook; the SDK's default loader aborts the
+    // process when invoked without an override. Idempotent and harmless when Nsight is
+    // not attached.
+    NsightGraphicsCaptureTool::EnsureLoaderInstalled();
+#endif
+
     const std::uint32_t loaderVersion = volkGetInstanceVersion();
     HYLUX_LOG(::Hylux::LogRender, Info, "Vulkan loader version {}.{}.{}",
               VK_VERSION_MAJOR(loaderVersion), VK_VERSION_MINOR(loaderVersion),

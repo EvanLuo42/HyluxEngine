@@ -13,7 +13,9 @@
 #include "RHI/RHIDeviceDesc.h"
 #include "RHI/RHIInstanceDesc.h"
 #include "RHI/RHISubsystem.h"
+#include "Renderer/Subsystem/RenderSubsystem.h"
 #include "Shader/ShaderSubsystem.h"
+#include "ShaderCompiler/ShaderCompiler.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -47,6 +49,21 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
 #endif
     engine_.RegisterSubsystem<RHI::RHISubsystem>(rhiInstanceDesc, rhiDeviceDesc);
 
+    // Compile shaders into the archive that ShaderSubsystem opens. Silent skip when the
+    // repo root is unknown (binary relocated outside the source tree); ShaderSubsystem
+    // then runs against an empty archive.
+    {
+        Editor::ShaderCompiler shaderCompiler;
+        if (shaderCompiler.IsReady() && !EnginePaths::RepoRoot().empty())
+        {
+            Editor::ShaderCompiler::Config compilerConfig{};
+            compilerConfig.sourceDir     = EnginePaths::RepoRoot() / "Engine" / "Shaders";
+            compilerConfig.outputArchive = EnginePaths::ExecutableDir() / "ShaderCache" /
+                                            "Win_Vulkan.hslib";
+            (void)shaderCompiler.Compile(compilerConfig);
+        }
+    }
+
     Shader::ShaderSubsystem::Config shaderConfig{};
     shaderConfig.blobStore =
         std::make_unique<FilesystemBlobStore>(EnginePaths::ExecutableDir() / "ShaderCache");
@@ -54,13 +71,17 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
     shaderConfig.enableHotReload = true;
     engine_.RegisterSubsystem<Shader::ShaderSubsystem>(std::move(shaderConfig));
 
+    Renderer::RendererConfig rendererConfig{};
+    rendererConfig.psoCacheDir = EnginePaths::ExecutableDir() / "PsoCache";
+    engine_.RegisterSubsystem<Renderer::RenderSubsystem>(std::move(rendererConfig));
+
     engine_.Initialize();
 
     HYLUX_LOG_INFO(LogEngine, "HyluxEditor starting (Qt {}.{}.{})", QT_VERSION_MAJOR, QT_VERSION_MINOR,
                    QT_VERSION_PATCH);
 
-    const auto& repoRoot       = EnginePaths::RepoRoot();
-    const auto& contentRoot    = EnginePaths::ProjectContentRoot();
+    const auto& repoRoot    = EnginePaths::RepoRoot();
+    const auto& contentRoot = EnginePaths::ProjectContentRoot();
     if (repoRoot.empty())
     {
         HYLUX_LOG_WARN(LogEngine,
@@ -84,12 +105,12 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
         engine_.Shutdown();
     });
 
-    lastTick_ = std::chrono::steady_clock::now();
+    lastTick_  = std::chrono::steady_clock::now();
     tickTimer_ = std::make_unique<QTimer>();
     QObject::connect(tickTimer_.get(), &QTimer::timeout, guiApp_.get(), [this]() {
-        const auto now = std::chrono::steady_clock::now();
+        const auto  now   = std::chrono::steady_clock::now();
         const float delta = std::chrono::duration<float>(now - lastTick_).count();
-        lastTick_ = now;
+        lastTick_         = now;
         engine_.Tick(delta);
     });
     tickTimer_->start(16);

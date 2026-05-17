@@ -17,8 +17,10 @@ class Vec4;
 struct Vec3Packed;
 
 class Mat3;
+class Mat3x4;
 class Mat4;
 
+class Frustum;
 class Quat;
 class Transform;
 

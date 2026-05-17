@@ -133,6 +133,11 @@ struct GraphicsPipelineDesc
     Format               depthStencilFormat{Format::Unknown};
     std::uint32_t        sampleCount{1};
     std::uint32_t        viewMask{0};
+
+    /// @brief Optional backend pipeline cache. When non-null the backend uses it as the
+    ///        VkPipelineCache (or equivalent) argument to its create-pipelines call, which
+    ///        lets a second compilation of the same logical PSO skip most driver work.
+    IRHIPipelineCache*   pipelineCache{nullptr};
 };
 
 /// @brief Compute pipeline description.

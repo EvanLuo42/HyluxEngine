@@ -25,6 +25,7 @@ class IRHIPipelineLayout;
 class IRHIGraphicsPipeline;
 class IRHIComputePipeline;
 class IRHIRayTracingPipeline;
+class IRHIPipelineCache;
 class IRHIAccelerationStructure;
 class IRHIBindlessHeap;
 class IRHIDescriptorSetLayout;

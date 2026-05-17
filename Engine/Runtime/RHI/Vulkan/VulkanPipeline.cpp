@@ -11,6 +11,7 @@
 #include "RHI/Vulkan/VulkanDevice.h"
 #include "RHI/Vulkan/VulkanEnums.h"
 #include "RHI/Vulkan/VulkanFormat.h"
+#include "RHI/Vulkan/VulkanPipelineCache.h"
 #include "RHI/Vulkan/VulkanShaderModule.h"
 
 #include <vector>
@@ -185,7 +186,11 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(VulkanDevice* device, const Graph
     ci.pDynamicState       = &dynState;
     ci.layout              = layout;
 
-    if (vkCreateGraphicsPipelines(device->GetVkDevice(), VK_NULL_HANDLE, 1, &ci,
+    VkPipelineCache pipelineCache = desc.pipelineCache != nullptr
+        ? static_cast<VulkanPipelineCache*>(desc.pipelineCache)->GetVkPipelineCache()
+        : VK_NULL_HANDLE;
+
+    if (vkCreateGraphicsPipelines(device->GetVkDevice(), pipelineCache, 1, &ci,
                                   nullptr, &pipeline_) != VK_SUCCESS)
     {
         HYLUX_LOG(::Hylux::LogRender, Error, "vkCreateGraphicsPipelines failed");

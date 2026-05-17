@@ -69,3 +69,7 @@ if (WIN32)
             VERBATIM
     )
 endif ()
+
+# Make sure GFSDK_Aftermath_Lib.x64.dll sits next to the editor exe on every build.
+# See helper definition in Engine/Runtime/CMakeLists.txt for the rationale.
+hylux_copy_aftermath_dll_next_to(${HYLUX_EDITOR_APP_TARGET})

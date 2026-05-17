@@ -34,11 +34,11 @@ public:
     [[nodiscard]] Engine& GetEngine() noexcept { return engine_; }
 
 private:
-    std::unique_ptr<QGuiApplication> guiApp_;
-    Engine engine_;
-    std::unique_ptr<QTimer> tickTimer_;
+    std::unique_ptr<QGuiApplication>       guiApp_;
+    Engine                                 engine_;
+    std::unique_ptr<QTimer>                tickTimer_;
     std::unique_ptr<QQmlApplicationEngine> qmlEngine_;
-    std::chrono::steady_clock::time_point lastTick_;
+    std::chrono::steady_clock::time_point  lastTick_;
 };
 
 } // namespace Hylux

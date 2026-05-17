@@ -292,6 +292,7 @@ void VulkanDevice::Shutdown() noexcept
         vkDeviceWaitIdle(device_);
     }
     for (auto& v : queues_) v.clear();
+    pipelineCaches_.clear();
     crashReporter_.Reset();
     if (vmaAllocator_)
     {

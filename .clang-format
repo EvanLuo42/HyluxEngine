@@ -31,6 +31,12 @@ BraceWrapping:
   SplitEmptyFunction: false
   SplitEmptyRecord: false
   SplitEmptyNamespace: false
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: false
+  PadOperators: false
 FixNamespaceComments: true
 IncludeBlocks: Regroup
 SortIncludes: CaseSensitive

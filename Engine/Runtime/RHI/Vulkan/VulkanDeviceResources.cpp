@@ -10,6 +10,7 @@
 #include "RHI/Vulkan/VulkanBuffer.h"
 #include "RHI/Vulkan/VulkanDescriptorSet.h"
 #include "RHI/Vulkan/VulkanPipeline.h"
+#include "RHI/Vulkan/VulkanPipelineCache.h"
 #include "RHI/Vulkan/VulkanQueryPool.h"
 #include "RHI/Vulkan/VulkanSampler.h"
 #include "RHI/Vulkan/VulkanShaderModule.h"
@@ -84,6 +85,18 @@ Ref<IRHIAccelerationStructure> VulkanDevice::CreateBlas(const BlasDesc& /*desc*/
 Ref<IRHIAccelerationStructure> VulkanDevice::CreateTlas(const TlasDesc& /*desc*/)
 {
     return MakeRef<VulkanAccelerationStructure>(this);
+}
+
+Ref<IRHIPipelineCache> VulkanDevice::GetOrCreatePipelineCache(std::string_view name)
+{
+    const std::string key(name);
+    if (auto it = pipelineCaches_.find(key); it != pipelineCaches_.end())
+    {
+        return it->second;
+    }
+    auto cache = MakeRef<VulkanPipelineCache>(this);
+    pipelineCaches_.emplace(key, cache);
+    return cache;
 }
 
 Ref<IRHIBindlessHeap> VulkanDevice::GetBindlessHeap(BindlessKind kind)

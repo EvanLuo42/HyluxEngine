@@ -133,10 +133,10 @@ Mat4 Mat4::Inverse() const noexcept
 
     // Repack from the inv buffer (row-major in the formulas above) into column-major SimdF32x4 columns.
     Mat4 r;
-    r.cols_[0] = SimdSet(inv[0], inv[1], inv[2], inv[3]);
-    r.cols_[1] = SimdSet(inv[4], inv[5], inv[6], inv[7]);
-    r.cols_[2] = SimdSet(inv[8], inv[9], inv[10], inv[11]);
-    r.cols_[3] = SimdSet(inv[12], inv[13], inv[14], inv[15]);
+    r.cols_[0] = SimdSet(inv[0], inv[4], inv[8],  inv[12]);
+    r.cols_[1] = SimdSet(inv[1], inv[5], inv[9],  inv[13]);
+    r.cols_[2] = SimdSet(inv[2], inv[6], inv[10], inv[14]);
+    r.cols_[3] = SimdSet(inv[3], inv[7], inv[11], inv[15]);
     return r;
 }
 

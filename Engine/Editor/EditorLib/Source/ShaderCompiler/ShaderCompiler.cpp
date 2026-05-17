@@ -10,12 +10,14 @@
 #include "Core/Utils/Hash.h"
 #include "RHI/RHIEnums.h"
 #include "ShaderCompiler/HslibBuilder.h"
+#include "ShaderCompiler/ShaderManifest.h"
 
 #include <slang-com-ptr.h>
 #include <slang.h>
 
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace Hylux::Editor
@@ -279,6 +281,120 @@ bool ShaderCompiler::Compile(const Config& config)
                    "ShaderCompiler: archive '{}' written ({} entries from {} source files)",
                    config.outputArchive.string(), totalCompiledEntries, totalSourceFiles);
     return true;
+}
+
+namespace
+{
+
+[[nodiscard]] std::filesystem::path ManifestPathFor(const std::filesystem::path& archive)
+{
+    std::filesystem::path manifest = archive;
+    manifest += ".slangindex";
+    return manifest;
+}
+
+[[nodiscard]] std::size_t CountOutdated(const ShaderManifest& previous, const ShaderManifest& current)
+{
+    std::unordered_map<std::string, std::uint64_t> previousByPath;
+    previousByPath.reserve(previous.Entries().size());
+    for (const auto& entry : previous.Entries())
+    {
+        previousByPath.emplace(entry.relativePath, entry.contentHash);
+    }
+    std::size_t outdated = 0;
+    for (const auto& entry : current.Entries())
+    {
+        auto it = previousByPath.find(entry.relativePath);
+        if (it == previousByPath.end() || it->second != entry.contentHash)
+        {
+            ++outdated;
+        }
+    }
+    for (const auto& entry : previous.Entries())
+    {
+        bool stillPresent = false;
+        for (const auto& currentEntry : current.Entries())
+        {
+            if (currentEntry.relativePath == entry.relativePath)
+            {
+                stillPresent = true;
+                break;
+            }
+        }
+        if (!stillPresent)
+        {
+            ++outdated;
+        }
+    }
+    return outdated;
+}
+
+} // namespace
+
+ShaderCompiler::IncrementalResult ShaderCompiler::CompileIfOutdated(const Config& config, ProgressFn progress)
+{
+    IncrementalResult result{};
+
+    const ShaderManifest current = ShaderManifest::BuildFromSourceDir(config.sourceDir);
+    result.totalSources          = current.Entries().size();
+
+    const std::filesystem::path manifestPath = ManifestPathFor(config.outputArchive);
+    ShaderManifest              previous;
+    const bool                  havePrevious = previous.Load(manifestPath);
+
+    std::error_code ec;
+    const bool      archiveExists = std::filesystem::exists(config.outputArchive, ec);
+
+    if (havePrevious && archiveExists && previous.MatchesContent(current))
+    {
+        result.ok       = true;
+        result.compiled = false;
+        HYLUX_LOG_INFO(LogRender,
+                       "ShaderCompiler: archive '{}' up to date ({} sources)",
+                       config.outputArchive.string(), result.totalSources);
+        return result;
+    }
+
+    if (result.totalSources == 0)
+    {
+        result.ok            = true;
+        result.compiled      = false;
+        result.outdatedCount = 0;
+        HYLUX_LOG_INFO(LogRender,
+                       "ShaderCompiler: source dir '{}' contains no .slang files; archive skipped",
+                       config.sourceDir.string());
+        return result;
+    }
+
+    result.outdatedCount = havePrevious ? CountOutdated(previous, current) : current.Entries().size();
+    if (!archiveExists)
+    {
+        result.outdatedCount = std::max<std::size_t>(result.outdatedCount, current.Entries().size());
+    }
+
+    if (progress)
+    {
+        std::size_t index = 0;
+        for (const auto& entry : current.Entries())
+        {
+            ++index;
+            progress(index, current.Entries().size(), entry.relativePath);
+        }
+    }
+
+    const bool compileOk = Compile(config);
+    result.ok            = compileOk;
+    result.compiled      = compileOk;
+    if (compileOk)
+    {
+        if (!current.Save(manifestPath))
+        {
+            HYLUX_LOG_WARN(LogRender,
+                           "ShaderCompiler: archive built but manifest '{}' could not be saved",
+                           manifestPath.string());
+        }
+    }
+    return result;
 }
 
 } // namespace Hylux::Editor

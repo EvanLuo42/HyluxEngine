@@ -1,8 +1,13 @@
 /// @file
-/// @brief EditorApp implementation.
+/// @brief EditorApp implementation: drives splash → bootstrap → EngineLoop →
+///        DockHost/MainWindow sequence.
 
 #include "EditorApp.h"
 
+#include "Bootstrap/BootstrapProgress.h"
+#include "Bootstrap/EditorBootstrap.h"
+#include "Bootstrap/Steps/BootstrapShaderCompileStep.h"
+#include "Context/EditorContext.h"
 #include "Core/IO/Blob/FilesystemBlobStore.h"
 #include "Core/IO/Virtual/Providers/LooseFileProvider.h"
 #include "Core/IO/Virtual/VirtualFileSystem.h"
@@ -10,15 +15,23 @@
 #include "Core/Logging/LogSystem.h"
 #include "Core/Logging/Logger.h"
 #include "Core/Paths/EnginePaths.h"
+#include "Dock/BuiltinDocks.h"
+#include "Dock/DockHost.h"
+#include "Dock/DockRegistry.h"
+#include "Engine/EngineLoop.h"
+#include "Logging/QmlLogSink.h"
+#include "MainWindow/MainWindowController.h"
+#include "Menu/MenuRegistry.h"
 #include "RHI/RHIDeviceDesc.h"
 #include "RHI/RHIInstanceDesc.h"
 #include "RHI/RHISubsystem.h"
 #include "Renderer/Subsystem/RenderSubsystem.h"
+#include "Selection/SelectionContext.h"
 #include "Shader/ShaderSubsystem.h"
-#include "ShaderCompiler/ShaderCompiler.h"
+#include "Splash/SplashController.h"
+#include "Threading/MainThreadDispatcher.h"
 
 #include <QGuiApplication>
-#include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QTimer>
 
@@ -31,14 +44,37 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
     QGuiApplication::setOrganizationName("Hylux");
     QQuickStyle::setStyle("Fusion");
 
-    engine_.RegisterSubsystem<LogSystem>(LogSystemConfig{
-        .async = false,
-        .enableConsole = true,
-        .enableFile = true,
-        .enableDebugger = true,
-        .logDirectory = (EnginePaths::ExecutableDir() / "Logs").string(),
-    });
-    auto* vfs = engine_.RegisterSubsystem<VirtualFileSystem>();
+    splash_ = std::make_unique<SplashController>();
+    splash_->Show();
+
+    QObject::connect(guiApp_.get(), &QCoreApplication::aboutToQuit, guiApp_.get(),
+                     [this]() { ShutdownLoopAndEngine(); });
+
+    QTimer::singleShot(0, guiApp_.get(), [this]() { ContinueBootstrap(); });
+}
+
+EditorApp::~EditorApp() = default;
+
+int EditorApp::Run()
+{
+    return QGuiApplication::exec();
+}
+
+void EditorApp::RegisterEditorSubsystems()
+{
+    auto qmlSink   = std::make_unique<Editor::QmlLogSink>();
+    logSinkPtr_    = qmlSink.get();
+
+    LogSystemConfig logConfig{};
+    logConfig.async          = false;
+    logConfig.enableConsole  = true;
+    logConfig.enableFile     = true;
+    logConfig.enableDebugger = true;
+    logConfig.logDirectory   = (EnginePaths::ExecutableDir() / "Logs").string();
+    logConfig.extraSinks.push_back(std::move(qmlSink));
+    engine_.RegisterSubsystem<LogSystem>(std::move(logConfig));
+
+    engine_.RegisterSubsystem<VirtualFileSystem>();
 
     RHI::InstanceDesc rhiInstanceDesc{};
     rhiInstanceDesc.applicationName = "HyluxEditor";
@@ -48,21 +84,6 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
     rhiDeviceDesc.gapiValidation   = RHI::GapiValidationLevel::Standard;
 #endif
     engine_.RegisterSubsystem<RHI::RHISubsystem>(rhiInstanceDesc, rhiDeviceDesc);
-
-    // Compile shaders into the archive that ShaderSubsystem opens. Silent skip when the
-    // repo root is unknown (binary relocated outside the source tree); ShaderSubsystem
-    // then runs against an empty archive.
-    {
-        Editor::ShaderCompiler shaderCompiler;
-        if (shaderCompiler.IsReady() && !EnginePaths::RepoRoot().empty())
-        {
-            Editor::ShaderCompiler::Config compilerConfig{};
-            compilerConfig.sourceDir     = EnginePaths::RepoRoot() / "Engine" / "Shaders";
-            compilerConfig.outputArchive = EnginePaths::ExecutableDir() / "ShaderCache" /
-                                            "Win_Vulkan.hslib";
-            (void)shaderCompiler.Compile(compilerConfig);
-        }
-    }
 
     Shader::ShaderSubsystem::Config shaderConfig{};
     shaderConfig.blobStore =
@@ -74,63 +95,129 @@ EditorApp::EditorApp(int& argc, char** argv) : guiApp_(std::make_unique<QGuiAppl
     Renderer::RendererConfig rendererConfig{};
     rendererConfig.psoCacheDir = EnginePaths::ExecutableDir() / "PsoCache";
     engine_.RegisterSubsystem<Renderer::RenderSubsystem>(std::move(rendererConfig));
-
-    engine_.Initialize();
-
-    HYLUX_LOG_INFO(LogEngine, "HyluxEditor starting (Qt {}.{}.{})", QT_VERSION_MAJOR, QT_VERSION_MINOR,
-                   QT_VERSION_PATCH);
-
-    const auto& repoRoot    = EnginePaths::RepoRoot();
-    const auto& contentRoot = EnginePaths::ProjectContentRoot();
-    if (repoRoot.empty())
-    {
-        HYLUX_LOG_WARN(LogEngine,
-                       "VFS: could not discover repo root (no vcpkg.json found walking up from exe)");
-    }
-    else
-    {
-        vfs->Mount("/Engine/", std::make_shared<LooseFileProvider>(repoRoot / "Engine"), 0);
-    }
-    if (!contentRoot.empty())
-    {
-        vfs->Mount("/Game/", std::make_shared<LooseFileProvider>(contentRoot), 0);
-    }
-
-    QObject::connect(guiApp_.get(), &QCoreApplication::aboutToQuit, guiApp_.get(), [this]() {
-        HYLUX_LOG_INFO(LogEngine, "HyluxEditor shutting down");
-        if (tickTimer_)
-        {
-            tickTimer_->stop();
-        }
-        engine_.Shutdown();
-    });
-
-    lastTick_  = std::chrono::steady_clock::now();
-    tickTimer_ = std::make_unique<QTimer>();
-    QObject::connect(tickTimer_.get(), &QTimer::timeout, guiApp_.get(), [this]() {
-        const auto  now   = std::chrono::steady_clock::now();
-        const float delta = std::chrono::duration<float>(now - lastTick_).count();
-        lastTick_         = now;
-        engine_.Tick(delta);
-    });
-    tickTimer_->start(16);
-
-    qmlEngine_ = std::make_unique<QQmlApplicationEngine>();
-    QObject::connect(
-        qmlEngine_.get(), &QQmlApplicationEngine::objectCreationFailed, guiApp_.get(),
-        []() {
-            HYLUX_LOG_FATAL(LogEngine, "QML root object failed to load");
-            QCoreApplication::exit(-1);
-        },
-        Qt::QueuedConnection);
-    qmlEngine_->loadFromModule("Hylux.Editor", "Main");
 }
 
-EditorApp::~EditorApp() = default;
-
-int EditorApp::Run()
+void EditorApp::RegisterBuiltinMenus()
 {
-    return QGuiApplication::exec();
+    using Editor::MenuActionDesc;
+    menuRegistry_->Register(MenuActionDesc{
+        .path = "File/Exit", .shortcut = "Ctrl+Q", .run = []() { QCoreApplication::quit(); }, .order = 0});
+    menuRegistry_->Register(MenuActionDesc{.path = "Edit/Clear Selection",
+                                           .shortcut = "Esc",
+                                           .run      = [this]() { selectionContext_->Clear(); },
+                                           .order    = 0});
+    menuRegistry_->Register(MenuActionDesc{
+        .path = "Tools/Reload Shaders",
+        .shortcut = "F5",
+        .run      = [this]() {
+            editorContext_->Submit([](Engine& engine) {
+                if (auto* shaders = engine.GetSubsystem<Shader::ShaderSubsystem>(); shaders != nullptr)
+                {
+                    shaders->ReloadAll();
+                }
+            });
+        },
+        .order = 0});
+    menuRegistry_->Register(MenuActionDesc{.path = "Help/About", .run = []() {}, .order = 0});
+}
+
+void EditorApp::ContinueBootstrap()
+{
+    RegisterEditorSubsystems();
+
+    Editor::EditorBootstrap bootstrap;
+    bootstrap.AddStep(std::make_unique<Editor::BootstrapShaderCompileStep>());
+
+    Editor::BootstrapContext ctx{};
+    ctx.engine        = &engine_;
+    ctx.progress      = splash_->Progress();
+    ctx.repoRoot      = EnginePaths::RepoRoot();
+    ctx.executableDir = EnginePaths::ExecutableDir();
+
+    if (!bootstrap.Run(ctx))
+    {
+        HYLUX_LOG_FATAL(LogEngine, "Editor bootstrap failed; exiting");
+        QCoreApplication::exit(-1);
+        return;
+    }
+
+    splash_->SetStatus("Initializing subsystems…");
+
+    engineLoop_ = std::make_unique<EngineLoop>(engine_);
+    Future<bool> initFut = engineLoop_->Start();
+    dispatcher_          = std::make_unique<Editor::MainThreadDispatcher>();
+    dispatcher_->Then<bool>(std::move(initFut),
+                            [this](bool& ok) { OnEngineInitialized(ok); });
+}
+
+void EditorApp::OnEngineInitialized(bool ok)
+{
+    if (!ok)
+    {
+        HYLUX_LOG_FATAL(LogEngine, "Engine initialization failed; exiting");
+        QCoreApplication::exit(-1);
+        return;
+    }
+
+    const auto repoRoot    = EnginePaths::RepoRoot();
+    const auto contentRoot = EnginePaths::ProjectContentRoot();
+    engineLoop_->SubmitCommand([repoRoot, contentRoot](Engine& engine) {
+        if (auto* vfs = engine.GetSubsystem<VirtualFileSystem>(); vfs != nullptr)
+        {
+            if (!repoRoot.empty())
+            {
+                vfs->Mount("/Engine/", std::make_shared<LooseFileProvider>(repoRoot / "Engine"), 0);
+            }
+            if (!contentRoot.empty())
+            {
+                vfs->Mount("/Game/", std::make_shared<LooseFileProvider>(contentRoot), 0);
+            }
+        }
+    });
+
+    selectionContext_ = std::make_unique<Editor::SelectionContext>();
+    menuRegistry_     = std::make_unique<Editor::MenuRegistry>();
+    dockRegistry_     = std::make_unique<Editor::DockRegistry>();
+    dockHost_         = std::make_unique<Editor::DockHost>();
+
+    Editor::RegisterBuiltinDocks(*dockRegistry_, logSinkPtr_);
+
+    editorContext_ = std::make_unique<Editor::EditorContext>(*engineLoop_, *dispatcher_, *dockRegistry_,
+                                                             *dockHost_, *menuRegistry_, *selectionContext_);
+
+    dockHost_->Build(*editorContext_, *dockRegistry_);
+    RegisterBuiltinMenus();
+
+    mainWindow_ = std::make_unique<MainWindowController>(*editorContext_);
+    mainWindow_->Load();
+
+    splash_->Close();
+    HYLUX_LOG_INFO(LogEngine, "HyluxEditor ready");
+}
+
+void EditorApp::ShutdownLoopAndEngine()
+{
+    HYLUX_LOG_INFO(LogEngine, "HyluxEditor shutting down");
+    if (mainWindow_)
+    {
+        mainWindow_->TearDown();
+        mainWindow_.reset();
+    }
+    if (dockHost_)
+    {
+        dockHost_->TearDown();
+    }
+    if (engineLoop_)
+    {
+        engineLoop_->Stop();
+        engineLoop_.reset();
+    }
+    editorContext_.reset();
+    dockHost_.reset();
+    dockRegistry_.reset();
+    menuRegistry_.reset();
+    selectionContext_.reset();
+    dispatcher_.reset();
 }
 
 } // namespace Hylux

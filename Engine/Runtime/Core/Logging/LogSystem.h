@@ -3,11 +3,13 @@
 
 #pragma once
 
+#include "Core/Logging/ILogSink.h"
 #include "Core/Logging/LogDispatcher.h"
 #include "Engine/ISubsystem.h"
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace Hylux
 {
@@ -15,11 +17,12 @@ namespace Hylux
 /// @brief Construction-time configuration for LogSystem.
 struct LogSystemConfig
 {
-    bool        async          = false;
-    bool        enableConsole  = true;
-    bool        enableFile     = true;
-    bool        enableDebugger = true;
-    std::string logDirectory   = "Logs";
+    bool                                   async          = false;
+    bool                                   enableConsole  = true;
+    bool                                   enableFile     = true;
+    bool                                   enableDebugger = true;
+    std::string                            logDirectory   = "Logs";
+    std::vector<std::unique_ptr<ILogSink>> extraSinks;
 };
 
 /// @brief Owns the active LogDispatcher and its sinks. Before Initialize and after Shutdown,

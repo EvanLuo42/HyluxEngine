@@ -7,7 +7,10 @@
 
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
+#include <functional>
+#include <string>
 
 namespace Hylux::Editor
 {
@@ -23,6 +26,22 @@ public:
         std::filesystem::path outputArchive;   // e.g. <exe>/ShaderCache/Win_Vulkan.hslib
     };
 
+    /// @brief Optional callback used by CompileIfOutdated to surface progress to the
+    ///        editor splash. Called with the current file index (1-based), the total
+    ///        file count, and the relative path being compiled.
+    using ProgressFn = std::function<void(std::size_t index, std::size_t total, const std::string& relPath)>;
+
+    /// @brief Outcome of CompileIfOutdated. `compiled` is true when the archive was
+    ///        (re)written; `outdatedCount` is the number of source files that triggered
+    ///        the rebuild (zero means the manifest matched and nothing was done).
+    struct IncrementalResult
+    {
+        bool        ok            = false;
+        bool        compiled      = false;
+        std::size_t outdatedCount = 0;
+        std::size_t totalSources  = 0;
+    };
+
     ShaderCompiler();
     ~ShaderCompiler();
 
@@ -34,6 +53,12 @@ public:
     ///        was persisted; logs warnings on per-file failures (those files are dropped
     ///        from the archive but do not abort the build).
     [[nodiscard]] bool Compile(const Config& config);
+
+    /// @brief Loads the sidecar manifest written next to outputArchive (if any), walks
+    ///        sourceDir and compares hashes, and only invokes the underlying compiler
+    ///        when something is outdated or the archive is missing. On success writes
+    ///        a fresh manifest for the next launch.
+    [[nodiscard]] IncrementalResult CompileIfOutdated(const Config& config, ProgressFn progress = {});
 
     [[nodiscard]] bool IsReady() const noexcept;
 

@@ -22,7 +22,7 @@ namespace
 {
 
 template <typename DispatcherT>
-void AttachSinks(DispatcherT& dispatcher, const LogSystemConfig& config)
+void AttachSinks(DispatcherT& dispatcher, LogSystemConfig& config)
 {
     if (config.enableConsole)
     {
@@ -48,6 +48,14 @@ void AttachSinks(DispatcherT& dispatcher, const LogSystemConfig& config)
 #else
     (void)config.enableDebugger;
 #endif
+    for (auto& extra : config.extraSinks)
+    {
+        if (extra)
+        {
+            dispatcher.AddSink(std::move(extra));
+        }
+    }
+    config.extraSinks.clear();
 }
 
 } // namespace

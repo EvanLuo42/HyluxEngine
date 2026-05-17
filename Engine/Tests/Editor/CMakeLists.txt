@@ -1,4 +1,4 @@
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Test)
 
 set(HYLUX_EDITOR_TESTS_TARGET HyluxEditorTests)
 
@@ -14,6 +14,7 @@ target_link_libraries(${HYLUX_EDITOR_TESTS_TARGET}
         Hylux::EditorLib
         Qt6::Core
         Qt6::Gui
+        Qt6::Test
         doctest::doctest
 )
 

@@ -20,7 +20,10 @@ namespace Hylux
 /// @brief Runtime orchestrator. Owns subsystem lifetimes, resolves dependency ordering
 ///        via Kahn topological sort, and drives a per-frame tickable list.
 ///        Not a singleton: construct one per host (editor world, standalone launcher, test).
-///        All public methods must be called from the same thread (the main loop).
+///        RegisterSubsystem must be called on the construction thread before Initialize.
+///        All other public methods (Initialize / Tick / Shutdown / GetSubsystem / Register-
+///        and UnregisterTickable) must be called from a single, stable loop thread; when
+///        an EngineLoop wraps this instance, that loop thread is the game thread it owns.
 class Engine
 {
 public:

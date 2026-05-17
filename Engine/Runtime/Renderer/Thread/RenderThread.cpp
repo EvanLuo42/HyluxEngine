@@ -15,6 +15,7 @@
 #include "Renderer/Material/MaterialProxyCache.h"
 #include "Renderer/Path/IRenderPath.h"
 #include "Renderer/Path/RenderContext.h"
+#include "Renderer/Path/RenderResources.h"
 #include "Renderer/Proxy/ProxyRegistry.h"
 #include "Renderer/Thread/FrameFenceTimeline.h"
 #include "Renderer/Thread/StructuralCommand.h"
@@ -291,6 +292,12 @@ void RenderThread::RenderFrame(const BeginFrameCmd& begin, std::uint64_t renderF
         request.path->BuildGraph(ctx);
         graph.Compile();
         graph.Execute(cmd);
+    }
+
+    if (deps_.resources != nullptr && deps_.timeline != nullptr)
+    {
+        const std::uint32_t framesInFlight = deps_.timeline->GetFramesInFlight();
+        deps_.resources->EndFrame(renderFrameId, framesInFlight + 2u);
     }
 }
 

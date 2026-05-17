@@ -23,7 +23,7 @@ enum class ParameterKind : std::uint8_t
 struct ParameterValue
 {
     ParameterKind kind{ParameterKind::Scalar};
-    float         vec[4]{};      // scalar uses vec[0]; vector uses vec[0..3]
+    float         vec[4]{}; // scalar uses vec[0]; vector uses vec[0..3]
     std::uint64_t textureHandle{0};
 };
 
@@ -36,7 +36,7 @@ struct ParameterDesc
     ParameterKind kind{ParameterKind::Scalar};
 
     /// @brief True if a change to this parameter changes the shader permutation key.
-    bool          isPermutation{false};
+    bool isPermutation{false};
 
     /// @brief Byte offset of the value inside the per-instance uniform block (scalar /
     ///        vector only).

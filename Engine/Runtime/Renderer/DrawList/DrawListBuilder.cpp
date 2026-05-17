@@ -156,10 +156,9 @@ std::unique_ptr<DrawList> DrawListBuilder::Build()
     if (drawCount > 0 && uploadHeap_ != nullptr && desc_.instanceLayout.stride > 0)
     {
         const std::uint64_t instanceBytes = static_cast<std::uint64_t>(drawCount) * desc_.instanceLayout.stride;
-        const auto          instAlloc = uploadHeap_->Allocate(instanceBytes, 16);
-        if (instAlloc)
+        if (const auto instAlloc = uploadHeap_->Allocate(instanceBytes, 16))
         {
-            std::memset(instAlloc.cpu, 0, static_cast<std::size_t>(instanceBytes));
+            std::memset(instAlloc.cpu, 0, instanceBytes);
             // Real per-instance population happens here once the layout schema is wired
             // through MaterialProxy / PrimitiveProxy. For now we leave the bytes zeroed.
             instanceBuffer = instAlloc.gpu;

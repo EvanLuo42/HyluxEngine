@@ -8,6 +8,13 @@
 #include "Renderer/RendererForward.h"
 
 #include <cstdint>
+#include <string_view>
+
+namespace Hylux::RHI
+{
+struct TextureDesc;
+class IRHITexture;
+} // namespace Hylux::RHI
 
 namespace Hylux::RG
 {
@@ -60,6 +67,10 @@ public:
     ///        registry and writes per-instance data into the current transform buffer half.
     ///        Builder is value-returned; chain `.WithCustomFilter(...).Build()`.
     [[nodiscard]] DrawListBuilder CreateDrawList(const DrawListDesc& desc) const;
+
+    /// @brief Convenience: forwards to RenderResources::GetOrCreateTexture using the
+    ///        current renderFrameId so paths don't have to thread it manually.
+    RHI::IRHITexture* GetOrCreateResourceTexture(std::string_view name, const RHI::TextureDesc& desc) const;
 
 private:
     RG::RenderGraph&       graph_;

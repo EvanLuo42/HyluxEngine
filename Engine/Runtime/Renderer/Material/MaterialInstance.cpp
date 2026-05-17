@@ -12,7 +12,7 @@ namespace Hylux::Renderer
 namespace
 {
 
-inline std::uint64_t HashMix(std::uint64_t seed, const void* data, std::size_t size) noexcept
+std::uint64_t HashMix(std::uint64_t seed, const void* data, std::size_t size) noexcept
 {
     return Hash::Fnv1a64(static_cast<const char*>(data), size, seed);
 }
@@ -26,7 +26,7 @@ std::uint64_t MaterialInstance::GetAssetHash() const noexcept
     return asset_ != nullptr ? asset_->GetAssetHash() : 0ull;
 }
 
-void MaterialInstance::MarkDirty() noexcept
+void MaterialInstance::MarkDirty() const noexcept
 {
     hashDirty_ = true;
 }
@@ -43,7 +43,7 @@ void MaterialInstance::SetScalar(NameHash name, float value)
         return;
     }
     ParameterValue& slot = overrides_[name];
-    slot.kind   = ParameterKind::Scalar;
+    slot.kind = ParameterKind::Scalar;
     slot.vec[0] = value;
     MarkDirty();
 }
@@ -60,7 +60,7 @@ void MaterialInstance::SetVector(NameHash name, float x, float y, float z, float
         return;
     }
     ParameterValue& slot = overrides_[name];
-    slot.kind   = ParameterKind::Vector;
+    slot.kind = ParameterKind::Vector;
     slot.vec[0] = x;
     slot.vec[1] = y;
     slot.vec[2] = z;
@@ -80,7 +80,7 @@ void MaterialInstance::SetTexture(NameHash name, std::uint64_t textureHandle)
         return;
     }
     ParameterValue& slot = overrides_[name];
-    slot.kind          = ParameterKind::Texture;
+    slot.kind = ParameterKind::Texture;
     slot.textureHandle = textureHandle;
     MarkDirty();
 }
@@ -126,7 +126,7 @@ std::uint64_t MaterialInstance::GetInstanceHash() const noexcept
         }
     }
     cachedPermutationKey_ = perm;
-    hashDirty_            = false;
+    hashDirty_ = false;
     return cachedInstanceHash_;
 }
 
@@ -145,8 +145,8 @@ MaterialSnapshot MaterialInstance::Snapshot() const
         return snap;
     }
     snap.materialAssetHash = asset_->GetAssetHash();
-    snap.instanceHash      = GetInstanceHash();
-    snap.permutationKey    = cachedPermutationKey_;
+    snap.instanceHash = GetInstanceHash();
+    snap.permutationKey = cachedPermutationKey_;
 
     snap.uniformBlock.assign(asset_->GetUniformBlockSize(), std::byte{0});
     snap.textureHandles.assign(asset_->GetTextureCount(), 0ull);
@@ -161,9 +161,7 @@ MaterialSnapshot MaterialInstance::Snapshot() const
         const auto& value = it->second;
         if (desc.kind == ParameterKind::Scalar || desc.kind == ParameterKind::Vector)
         {
-            const std::size_t copyBytes = desc.kind == ParameterKind::Scalar
-                                              ? sizeof(float)
-                                              : sizeof(float) * 4;
+            const std::size_t copyBytes = desc.kind == ParameterKind::Scalar ? sizeof(float) : sizeof(float) * 4;
             if (desc.uniformOffset + copyBytes <= snap.uniformBlock.size())
             {
                 std::memcpy(snap.uniformBlock.data() + desc.uniformOffset, value.vec, copyBytes);

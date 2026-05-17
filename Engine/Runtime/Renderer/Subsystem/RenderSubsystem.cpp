@@ -31,8 +31,7 @@ namespace Hylux::Renderer
 {
 
 RenderSubsystem::RenderSubsystem(RendererConfig config)
-    : config_(std::move(config)), proxies_(std::make_unique<ProxyRegistry>()),
-      resources_(std::make_unique<RenderResources>())
+    : config_(std::move(config)), proxies_(std::make_unique<ProxyRegistry>())
 {}
 
 RenderSubsystem::~RenderSubsystem() = default;
@@ -117,6 +116,7 @@ void RenderSubsystem::Initialize(Engine& engine)
         return;
     }
 
+    resources_ = std::make_unique<RenderResources>(device_);
     materials_ = std::make_unique<MaterialProxyCache>(shaders_);
     timeline_ = std::make_unique<FrameFenceTimeline>(config_.framesInFlight);
     cmdQueue_ = std::make_unique<StructuralCommandQueue>();
@@ -172,6 +172,12 @@ void RenderSubsystem::Shutdown()
         materials_->Clear();
     }
     materials_.reset();
+    if (resources_)
+    {
+        HYLUX_LOG_INFO(LogRender, "RenderResources totals: slots={}", resources_->Size());
+        resources_->Reset();
+    }
+    resources_.reset();
     uploadHeap_.reset();
     transformBuffer_.reset();
 

@@ -4,6 +4,7 @@
 #include "Renderer/Path/RenderContext.h"
 
 #include "Renderer/DrawList/DrawListBuilder.h"
+#include "Renderer/Path/RenderResources.h"
 #include "Renderer/Proxy/ProxyRegistry.h"
 
 namespace Hylux::Renderer
@@ -21,6 +22,11 @@ RenderContext::RenderContext(RG::RenderGraph& graph, const SceneView& view, cons
 DrawListBuilder RenderContext::CreateDrawList(const DrawListDesc& desc) const
 {
     return DrawListBuilder(&proxies_, transformBuffer_, &view_, uploadHeap_, desc);
+}
+
+RHI::IRHITexture* RenderContext::GetOrCreateResourceTexture(std::string_view name, const RHI::TextureDesc& desc) const
+{
+    return resources_.GetOrCreateTexture(name, desc, renderFrameId_);
 }
 
 } // namespace Hylux::Renderer

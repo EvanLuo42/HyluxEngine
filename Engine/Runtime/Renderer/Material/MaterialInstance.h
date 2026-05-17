@@ -53,7 +53,7 @@ public:
     [[nodiscard]] MaterialSnapshot Snapshot() const;
 
 private:
-    void MarkDirty() noexcept;
+    void MarkDirty() const noexcept;
 
     const MaterialAsset*                          asset_{nullptr};
     std::unordered_map<NameHash, ParameterValue>  overrides_{};

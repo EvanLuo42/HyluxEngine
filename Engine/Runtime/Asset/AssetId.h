@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "Asset/Guid.h"
+#include "Core/Guid.h"
 
 #include <string>
 #include <string_view>

@@ -85,7 +85,14 @@ bool StdFile::Seek(FileOffset offset, SeekOrigin origin)
     if (!stream_.is_open()) return false;
     stream_.clear();
     stream_.seekg(static_cast<std::streamoff>(offset), ToStdSeekDir(origin));
-    stream_.seekp(static_cast<std::streamoff>(offset), ToStdSeekDir(origin));
+    // The get and put pointers share the underlying file cursor; calling seekp with
+    // the same relative offset would double-advance for SeekOrigin::Current. Sync
+    // the put pointer to the absolute landing position instead.
+    const auto pos = stream_.tellg();
+    if (pos != std::fstream::pos_type(-1))
+    {
+        stream_.seekp(pos);
+    }
     return stream_.good();
 }
 

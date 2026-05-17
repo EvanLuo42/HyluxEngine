@@ -8,7 +8,7 @@
 
 #include "Asset/AssetId.h"
 #include "Asset/AssetTypeId.h"
-#include "Asset/Guid.h"
+#include "Core/Guid.h"
 
 #include <cstdint>
 #include <optional>

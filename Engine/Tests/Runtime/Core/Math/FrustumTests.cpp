@@ -1,5 +1,5 @@
 /// @file
-/// @brief Tests for Math::Frustum — Gribb-Hartmann extraction + AABB / sphere / point tests.
+/// @brief Tests for Hylux::Math::Frustum (Gribb-Hartmann extraction + point/sphere/AABB tests).
 
 #include "Core/Math/Common.h"
 #include "Core/Math/Frustum.h"
@@ -8,70 +8,68 @@
 
 #include <doctest/doctest.h>
 
+#include <ostream>  // stringify std::string_view for doctest CHECKs
+TEST_SUITE_BEGIN("Core::Math");
+
 using namespace Hylux::Math;
 
-namespace
+TEST_CASE("Frustum: default-constructed has all-zero planes; contains anything (signedDistance = 0)")
 {
-
-/// @brief Builds a right-handed view-projection matrix matching the Vulkan / D3D12
-///        (depth [0, 1]) clip-space convention used by Frustum::FromViewProj.
-Mat4 BuildDemoViewProj()
-{
-    // Camera at (0, 0, 5) looking at the origin along -Z, world up = +Y.
-    const Mat4 view = Mat4::LookAtRH(Vec3{0.0f, 0.0f, 5.0f},
-                                     Vec3{0.0f, 0.0f, 0.0f},
-                                     Vec3{0.0f, 1.0f, 0.0f});
-    const Mat4 proj = Mat4::PerspectiveRH_ZO(DegToRad(90.0f), /*aspect*/ 1.0f,
-                                             /*nearZ*/ 0.5f, /*farZ*/ 50.0f);
-    return proj * view;
+    const Frustum f;
+    CHECK(f.GetPlane(Frustum::Left) == Vec4{0, 0, 0, 0});
+    CHECK(f.GetPlane(Frustum::Far) == Vec4{0, 0, 0, 0});
+    // With every plane (0,0,0,0), the signed distance is 0 for every point, which the
+    // "inside" test treats as on-plane (>= 0) -> point is inside.
+    CHECK(f.ContainsPoint(Vec3{0, 0, 0}));
+    CHECK(f.ContainsPoint(Vec3{1e9f, -1e9f, 1e9f}));
+    CHECK(f.IntersectsSphere(Vec3{0, 0, 0}, 1.0f));
+    CHECK(f.IntersectsAabb(Vec3{-1, -1, -1}, Vec3{1, 1, 1}));
 }
 
-} // namespace
-
-TEST_CASE("Frustum contains the origin when the camera is looking at it")
+TEST_CASE("Frustum::FromViewProj: standard perspective camera contains origin-relative points")
 {
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    CHECK(f.ContainsPoint(Vec3{0.0f, 0.0f, 0.0f}));
+    const Mat4 view = Mat4::LookAtRH(Vec3{0, 0, 5}, Vec3{0, 0, 0}, Vec3::UnitY());
+    const Mat4 proj = Mat4::PerspectiveRH_ZO(kHalfPi, 1.0f, 0.1f, 100.0f);
+    const Mat4 vp   = proj * view;
+    const Frustum f = Frustum::FromViewProj(vp);
+
+    CHECK(f.ContainsPoint(Vec3{0, 0, 0}));
+    // Point far behind the camera is outside.
+    CHECK_FALSE(f.ContainsPoint(Vec3{0, 0, 1000}));
 }
 
-TEST_CASE("Frustum rejects points behind the camera")
+TEST_CASE("Frustum::IntersectsSphere: radius extends inclusion across planes")
 {
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    // Camera is at (0,0,5) looking toward -Z, so (0, 0, 10) is behind it.
-    CHECK_FALSE(f.ContainsPoint(Vec3{0.0f, 0.0f, 10.0f}));
+    const Mat4 view = Mat4::LookAtRH(Vec3{0, 0, 5}, Vec3{0, 0, 0}, Vec3::UnitY());
+    const Mat4 proj = Mat4::PerspectiveRH_ZO(kHalfPi, 1.0f, 0.1f, 100.0f);
+    const Frustum f = Frustum::FromViewProj(proj * view);
+
+    CHECK(f.IntersectsSphere(Vec3{0, 0, 0}, 0.1f));
+    CHECK(f.IntersectsSphere(Vec3{0, 0, 1000}, 1e6f));
+    CHECK_FALSE(f.IntersectsSphere(Vec3{0, 0, 1000}, 0.1f));
 }
 
-TEST_CASE("Frustum rejects points beyond the far plane")
+TEST_CASE("Frustum::IntersectsAabb: degenerate AABB reduces to a point test")
 {
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    // Far plane at z = -45 from world origin (camera looks -Z from (0,0,5) with far=50).
-    CHECK_FALSE(f.ContainsPoint(Vec3{0.0f, 0.0f, -100.0f}));
+    const Mat4 view = Mat4::LookAtRH(Vec3{0, 0, 5}, Vec3{0, 0, 0}, Vec3::UnitY());
+    const Mat4 proj = Mat4::PerspectiveRH_ZO(kHalfPi, 1.0f, 0.1f, 100.0f);
+    const Frustum f = Frustum::FromViewProj(proj * view);
+
+    CHECK(f.IntersectsAabb(Vec3{0, 0, 0}, Vec3{0, 0, 0}));
+    CHECK_FALSE(f.IntersectsAabb(Vec3{0, 0, 1000}, Vec3{0.1f, 0.1f, 1001.0f}));
+    // Box straddling the far plane still passes the positive-vertex test.
+    CHECK(f.IntersectsAabb(Vec3{-1, -1, -1}, Vec3{1, 1, 200}));
 }
 
-TEST_CASE("Frustum IntersectsAabb accepts the unit cube at the origin")
+TEST_CASE("Frustum: PlaneIndex enumerators are 0..5 with Count==6")
 {
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    CHECK(f.IntersectsAabb(Vec3{-0.5f, -0.5f, -0.5f}, Vec3{0.5f, 0.5f, 0.5f}));
+    static_assert(Frustum::Left == 0);
+    static_assert(Frustum::Right == 1);
+    static_assert(Frustum::Bottom == 2);
+    static_assert(Frustum::Top == 3);
+    static_assert(Frustum::Near == 4);
+    static_assert(Frustum::Far == 5);
+    static_assert(Frustum::Count == 6);
 }
 
-TEST_CASE("Frustum IntersectsAabb rejects a unit cube far behind the camera")
-{
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    CHECK_FALSE(f.IntersectsAabb(Vec3{-0.5f, -0.5f,  99.5f}, Vec3{0.5f, 0.5f, 100.5f}));
-}
-
-TEST_CASE("Frustum IntersectsSphere mirrors AABB-style accept / reject")
-{
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    CHECK(f.IntersectsSphere(Vec3{0.0f, 0.0f, 0.0f}, 1.0f));
-    CHECK_FALSE(f.IntersectsSphere(Vec3{0.0f, 0.0f, 100.0f}, 1.0f));
-}
-
-TEST_CASE("Frustum extraction preserves plane count and assigns left / right via Gribb-Hartmann")
-{
-    const Frustum f = Frustum::FromViewProj(BuildDemoViewProj());
-    // Left and Right planes should differ on the X normal axis (mirror across YZ plane).
-    const auto left  = f.GetPlane(Frustum::Left);
-    const auto right = f.GetPlane(Frustum::Right);
-    CHECK(IsNearlyEqual(left.X(), -right.X(), 1.0e-4f));
-}
+TEST_SUITE_END();

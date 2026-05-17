@@ -3,12 +3,12 @@
 ///        layout; Generate() uses std::random_device-seeded mt19937_64 to fill 16 random
 ///        bytes, then patches version (v4) and variant (RFC) bits per the spec.
 
-#include "Asset/Guid.h"
+#include "Core/Guid.h"
 
 #include <cstring>
 #include <random>
 
-namespace Hylux::Asset
+namespace Hylux
 {
 namespace
 {
@@ -155,4 +155,4 @@ std::uint64_t Guid::Hash() const noexcept
     return lo ^ ((hi << 1) | (hi >> 63));
 }
 
-} // namespace Hylux::Asset
+} // namespace Hylux

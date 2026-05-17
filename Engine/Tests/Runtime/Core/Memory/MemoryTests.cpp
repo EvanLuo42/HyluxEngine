@@ -6,6 +6,9 @@
 
 #include <doctest/doctest.h>
 
+#include <ostream>  // stringify std::string_view for doctest CHECKs
+TEST_SUITE_BEGIN("Core::Memory");
+
 #include <utility>
 
 using namespace Hylux;
@@ -13,20 +16,14 @@ using namespace Hylux;
 namespace
 {
 
-/// @brief Trivial RefCounted subclass that pings a counter on destruction so tests can
-///        observe object lifetime independently of strong/weak counts.
 class Probe : public RefCounted
 {
 public:
-    explicit Probe(int* destructions) noexcept : destructions_(destructions) {}
+    explicit Probe(int* destructions = nullptr) noexcept : destructions_(destructions) {}
     ~Probe() override
     {
-        if (destructions_ != nullptr)
-        {
-            ++(*destructions_);
-        }
+        if (destructions_ != nullptr) ++(*destructions_);
     }
-
     int payload_{42};
 
 private:
@@ -36,7 +33,7 @@ private:
 class DerivedProbe : public Probe
 {
 public:
-    explicit DerivedProbe(int* destructions) noexcept : Probe(destructions) {}
+    explicit DerivedProbe(int* destructions = nullptr) noexcept : Probe(destructions) {}
 };
 
 class SharedProbe : public RefCounted, public EnableRefFromThis<SharedProbe>
@@ -47,75 +44,132 @@ public:
 
 } // namespace
 
-TEST_CASE("MakeRef yields the sole strong reference")
+// ---- RefCounted ------------------------------------------------------------
+
+TEST_CASE("RefCounted: initial state (strong=0, weak=1) and counter accessors")
 {
-    int destructions = 0;
+    auto* raw = new Probe;
+    CHECK(raw->GetStrongCount() == 0u);
+    CHECK(raw->GetWeakCount() == 1u);
+    raw->AddRef();
+    CHECK(raw->GetStrongCount() == 1u);
+    raw->Release();  // drops to 0, runs dtor, releases phantom weak, frees storage
+}
+
+TEST_CASE("RefCounted: AddWeakRef / ReleaseWeakRef and storage-free path")
+{
+    int destroyed = 0;
+    auto* raw = new Probe(&destroyed);
+    raw->AddRef();
+    raw->AddWeakRef();  // weak=2
+    raw->Release();     // strong->0 runs dtor; weak->1 (phantom released)
+    CHECK(destroyed == 1);
+    // raw is still addressable because we hold one explicit weak ref.
+    CHECK(raw->GetWeakCount() == 1u);
+    raw->ReleaseWeakRef();  // weak->0 frees storage; raw now dangling (do not dereference)
+}
+
+TEST_CASE("RefCounted::TryAddRefFromWeak: succeeds while live, fails after strong=0")
+{
+    auto* raw = new Probe;
+    raw->AddRef();
+    raw->AddWeakRef();
+    CHECK(raw->TryAddRefFromWeak());
+    CHECK(raw->GetStrongCount() == 2u);
+    raw->Release();
+    raw->Release();  // strong -> 0; dtor runs; phantom released; weak = 1 (our explicit one)
+    CHECK_FALSE(raw->TryAddRefFromWeak());
+    raw->ReleaseWeakRef();
+}
+
+// ---- Ref<T> ----------------------------------------------------------------
+
+TEST_CASE("Ref: default and nullptr ctors are empty")
+{
+    Ref<Probe> a;
+    Ref<Probe> b{nullptr};
+    CHECK(a.Get() == nullptr);
+    CHECK(b.Get() == nullptr);
+    CHECK_FALSE(a);
+    CHECK(a == nullptr);
+    CHECK(nullptr == a);
+}
+
+TEST_CASE("Ref(raw): AddRefs on construction; dtor Releases")
+{
+    int destroyed = 0;
     {
-        Ref<Probe> r = MakeRef<Probe>(&destructions);
+        auto* raw = new Probe(&destroyed);
+        raw->AddRef();
+        Ref<Probe> wrap{raw};
+        CHECK(raw->GetStrongCount() == 2u);
+        raw->Release();
+    }
+    CHECK(destroyed == 1);
+}
+
+TEST_CASE("MakeRef: returns a Ref with strong=1, weak=1")
+{
+    int destroyed = 0;
+    {
+        Ref<Probe> r = MakeRef<Probe>(&destroyed);
         REQUIRE(r);
         CHECK(r->GetStrongCount() == 1u);
         CHECK(r->GetWeakCount() == 1u);
         CHECK(r->payload_ == 42);
-        CHECK(destructions == 0);
+        CHECK(destroyed == 0);
     }
-    CHECK(destructions == 1);
+    CHECK(destroyed == 1);
 }
 
-TEST_CASE("Copying a Ref bumps the strong count, destroying both releases the object")
+TEST_CASE("Ref: copy ctor increments; move ctor steals without bumping")
 {
-    int destructions = 0;
+    int d = 0;
+    Ref<Probe> a = MakeRef<Probe>(&d);
     {
-        Ref<Probe> a = MakeRef<Probe>(&destructions);
-        {
-            Ref<Probe> b = a;
-            CHECK(a.Get() == b.Get());
-            CHECK(a->GetStrongCount() == 2u);
-        }
-        CHECK(a->GetStrongCount() == 1u);
-        CHECK(destructions == 0);
+        Ref<Probe> b = a;
+        CHECK(a->GetStrongCount() == 2u);
+        CHECK(b.Get() == a.Get());
     }
-    CHECK(destructions == 1);
+    CHECK(a->GetStrongCount() == 1u);
+
+    Ref<Probe> moved = std::move(a);
+    CHECK(a.Get() == nullptr);
+    CHECK(moved->GetStrongCount() == 1u);
 }
 
-TEST_CASE("Move construction transfers ownership without bumping the strong count")
+TEST_CASE("Ref: copy and move assignment, including self-assignment")
 {
-    int destructions = 0;
-    Ref<Probe> source = MakeRef<Probe>(&destructions);
-    Probe* raw = source.Get();
-    REQUIRE(raw->GetStrongCount() == 1u);
-
-    Ref<Probe> moved = std::move(source);
-    CHECK(source.Get() == nullptr);
-    CHECK(moved.Get() == raw);
-    CHECK(raw->GetStrongCount() == 1u);
+    int d = 0;
+    Ref<Probe> a = MakeRef<Probe>(&d);
+    Ref<Probe> b;
+    b = a;
+    CHECK(a->GetStrongCount() == 2u);
+    b = b;  // self-copy-assign — copy-and-swap handles it
+    CHECK(a->GetStrongCount() == 2u);
+    Ref<Probe> c;
+    c = std::move(b);
+    CHECK(b.Get() == nullptr);
+    CHECK(a->GetStrongCount() == 2u);
+    Ref<Probe> d2;
+    d2 = nullptr;
+    CHECK(d2.Get() == nullptr);
 }
 
-TEST_CASE("Reset releases the held object and clears the pointer")
+TEST_CASE("Ref: converting copy / move from Ref<Derived> to Ref<Base>")
 {
-    int destructions = 0;
-    Ref<Probe> r = MakeRef<Probe>(&destructions);
-    r.Reset();
-    CHECK(r.Get() == nullptr);
-    CHECK(destructions == 1);
+    int d = 0;
+    Ref<DerivedProbe> derived = MakeRef<DerivedProbe>(&d);
+    Ref<Probe> base{derived};  // converting copy AddRefs
+    CHECK(base.Get() == derived.Get());
+    CHECK(derived->GetStrongCount() == 2u);
+
+    Ref<Probe> moved{std::move(derived)};  // converting move Detaches
+    CHECK(derived.Get() == nullptr);
+    CHECK(moved->GetStrongCount() == 2u);
 }
 
-TEST_CASE("Detach yields a +1 raw pointer that Attach can re-adopt")
-{
-    int destructions = 0;
-    Ref<Probe> r = MakeRef<Probe>(&destructions);
-    Probe* raw = r.Detach();
-    REQUIRE(raw != nullptr);
-    CHECK(r.Get() == nullptr);
-    CHECK(raw->GetStrongCount() == 1u);
-
-    Ref<Probe> adopted;
-    adopted.Attach(raw);
-    CHECK(adopted.Get() == raw);
-    CHECK(adopted->GetStrongCount() == 1u);
-    CHECK(destructions == 0);
-}
-
-TEST_CASE("Comparison operators compare the underlying pointer")
+TEST_CASE("Ref: comparison operators compare the underlying pointer")
 {
     int d = 0;
     Ref<Probe> a = MakeRef<Probe>(&d);
@@ -123,51 +177,161 @@ TEST_CASE("Comparison operators compare the underlying pointer")
     Ref<Probe> c = MakeRef<Probe>(&d);
     CHECK(a == b);
     CHECK(a != c);
+    CHECK_FALSE(a == c);
     CHECK(Ref<Probe>{} == nullptr);
-    CHECK(nullptr == Ref<Probe>{});
     CHECK(a != nullptr);
+    CHECK(nullptr != a);
 }
 
-TEST_CASE("Ref converts from a derived Ref to a base Ref")
+TEST_CASE("Ref::Reset() and Reset(T*) and Detach/Attach")
 {
-    int destructions = 0;
-    Ref<DerivedProbe> derived = MakeRef<DerivedProbe>(&destructions);
-    Ref<Probe> base = derived;
-    CHECK(base.Get() == derived.Get());
-    CHECK(derived->GetStrongCount() == 2u);
+    int d = 0;
+    Ref<Probe> r = MakeRef<Probe>(&d);
+    r.Reset();
+    CHECK(r.Get() == nullptr);
+    CHECK(d == 1);
+
+    // Reset() on empty is a no-op.
+    r.Reset();
+    CHECK(r.Get() == nullptr);
+
+    // Reset(T*) on empty replaces the pointer.
+    r = MakeRef<Probe>(&d);
+    Probe* raw = r.Detach();
+    REQUIRE(raw != nullptr);
+    CHECK(r.Get() == nullptr);
+    CHECK(raw->GetStrongCount() == 1u);
+    Ref<Probe> adopted;
+    adopted.Attach(raw);
+    CHECK(adopted.Get() == raw);
+    CHECK(adopted->GetStrongCount() == 1u);
+    CHECK(d == 1);  // adoption did not destroy
+
+    // Attach releases the old held pointer (so Probe* raw is freed).
+    Ref<Probe> swapTarget = MakeRef<Probe>(&d);
+    swapTarget.Attach(nullptr);
+    CHECK(swapTarget.Get() == nullptr);
 }
 
-TEST_CASE("WeakRef does not extend object lifetime but keeps the control block addressable")
+TEST_CASE("Ref: Swap exchanges held pointers and updates ADL Swap")
 {
-    int destructions = 0;
+    int d = 0;
+    Ref<Probe> a = MakeRef<Probe>(&d);
+    Ref<Probe> b = MakeRef<Probe>(&d);
+    Probe* aRaw = a.Get();
+    Probe* bRaw = b.Get();
+    a.Swap(b);
+    CHECK(a.Get() == bRaw);
+    CHECK(b.Get() == aRaw);
+    Swap(a, b);  // ADL free-function swap
+    CHECK(a.Get() == aRaw);
+}
+
+TEST_CASE("Ref: arrow / star operators forward to the held object")
+{
+    Ref<Probe> r = MakeRef<Probe>();
+    r->payload_ = 99;
+    CHECK((*r).payload_ == 99);
+}
+
+// ---- WeakRef<T> ------------------------------------------------------------
+
+TEST_CASE("WeakRef: default ctor is empty; Expired true; Lock returns null")
+{
+    WeakRef<Probe> w;
+    CHECK(w.Expired());
+    CHECK(w.Lock().Get() == nullptr);
+    CHECK(w.GetUnsafe() == nullptr);
+}
+
+TEST_CASE("WeakRef: constructed from Ref<T>, Lock returns strong; Expired flips after strong drops")
+{
+    int destroyed = 0;
     WeakRef<Probe> weak;
     {
-        Ref<Probe> strong = MakeRef<Probe>(&destructions);
+        Ref<Probe> strong = MakeRef<Probe>(&destroyed);
         weak = strong;
         CHECK_FALSE(weak.Expired());
-        CHECK(strong->GetWeakCount() == 2u);
+        CHECK(strong->GetWeakCount() == 2u);  // 1 phantom + 1 weak
 
         Ref<Probe> locked = weak.Lock();
         CHECK(locked.Get() == strong.Get());
         CHECK(strong->GetStrongCount() == 2u);
     }
-    CHECK(destructions == 1);
+    CHECK(destroyed == 1);
     CHECK(weak.Expired());
     CHECK(weak.Lock().Get() == nullptr);
 }
 
-TEST_CASE("WeakRef::Lock from a never-assigned weak returns an empty Ref")
+TEST_CASE("WeakRef: copy / move / nullptr assignment correctly counts")
 {
-    WeakRef<Probe> weak;
-    CHECK(weak.Expired());
-    CHECK(weak.Lock().Get() == nullptr);
+    int d = 0;
+    Ref<Probe> strong = MakeRef<Probe>(&d);
+    WeakRef<Probe> a{strong};
+    WeakRef<Probe> b{a};   // copy
+    WeakRef<Probe> c{std::move(b)};  // move
+    CHECK(b.GetUnsafe() == nullptr);
+    CHECK(c.Lock().Get() == strong.Get());
+
+    WeakRef<Probe> d2;
+    d2 = a;
+    CHECK(d2.Lock().Get() == strong.Get());
+    d2 = nullptr;
+    CHECK(d2.Expired());
+
+    // Construct from raw T* (intrusive).
+    WeakRef<Probe> direct{strong.Get()};
+    CHECK(direct.Lock().Get() == strong.Get());
 }
 
-TEST_CASE("EnableRefFromThis upgrades this to a Ref while the object is alive")
+TEST_CASE("WeakRef: converting ctor from WeakRef<Derived>")
+{
+    int d = 0;
+    Ref<DerivedProbe> strong = MakeRef<DerivedProbe>(&d);
+    WeakRef<DerivedProbe> wd{strong};
+    WeakRef<Probe> wb{wd};
+    CHECK(wb.Lock().Get() == strong.Get());
+}
+
+TEST_CASE("WeakRef::Reset releases the weak ref")
+{
+    Ref<Probe> strong = MakeRef<Probe>();
+    WeakRef<Probe> w{strong};
+    CHECK(strong->GetWeakCount() == 2u);
+    w.Reset();
+    CHECK(w.Expired());
+    CHECK(strong->GetWeakCount() == 1u);
+}
+
+TEST_CASE("Swap(WeakRef, WeakRef) exchanges control blocks")
+{
+    Ref<Probe> a = MakeRef<Probe>();
+    Ref<Probe> b = MakeRef<Probe>();
+    WeakRef<Probe> wa{a};
+    WeakRef<Probe> wb{b};
+    Swap(wa, wb);
+    CHECK(wa.Lock().Get() == b.Get());
+    CHECK(wb.Lock().Get() == a.Get());
+}
+
+// ---- EnableRefFromThis -----------------------------------------------------
+
+TEST_CASE("EnableRefFromThis: RefFromThis returns a strong ref while alive")
 {
     Ref<SharedProbe> owner = MakeRef<SharedProbe>();
-    Ref<SharedProbe> fromThis = owner->RefFromThis();
-    REQUIRE(fromThis);
-    CHECK(fromThis.Get() == owner.Get());
+    Ref<SharedProbe> alias = owner->RefFromThis();
+    REQUIRE(alias);
+    CHECK(alias.Get() == owner.Get());
     CHECK(owner->GetStrongCount() == 2u);
 }
+
+TEST_CASE("EnableRefFromThis: const overload returns Ref<const T>")
+{
+    Ref<SharedProbe> owner = MakeRef<SharedProbe>();
+    const SharedProbe* p = owner.Get();
+    Ref<const SharedProbe> alias = p->RefFromThis();
+    REQUIRE(alias);
+    CHECK(alias.Get() == owner.Get());
+}
+
+TEST_SUITE_END();

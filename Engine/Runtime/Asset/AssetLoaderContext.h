@@ -8,7 +8,7 @@
 #include "Asset/AssetBase.h"
 #include "Asset/AssetTypeId.h"
 #include "Asset/Cooked/CookedFormat.h"
-#include "Asset/Guid.h"
+#include "Core/Guid.h"
 #include "Core/Async/Future.h"
 #include "Core/Memory/Ref.h"
 #include "RHI/RHIForward.h"

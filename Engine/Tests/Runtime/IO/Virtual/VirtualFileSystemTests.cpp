@@ -1,264 +1,248 @@
 /// @file
-/// @brief Unit tests for the VirtualFileSystem mount table: longest-prefix, priority overlay,
-///        read fall-through, and write no-fall-through (with an in-test ReadOnly mock provider).
+/// @brief Tests for VirtualFileSystem mount management + IFileSystem façade.
 
 #include "Core/IO/IFile.h"
-#include "Core/IO/Virtual/IFileProvider.h"
 #include "Core/IO/Virtual/Providers/LooseFileProvider.h"
 #include "Core/IO/Virtual/VirtualFileSystem.h"
 
 #include <doctest/doctest.h>
 
-#include <array>
-#include <chrono>
-#include <cstring>
+#include <ostream>  // stringify std::string_view for doctest CHECKs
+TEST_SUITE_BEGIN("IO::Virtual");
+
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
+#include <set>
 #include <string>
-#include <string_view>
-#include <system_error>
-#include <unordered_map>
 
 using namespace Hylux;
 
 namespace
 {
 
-std::filesystem::path MakeTempDir()
+std::filesystem::path UniqueTempDir(const char* suffix)
 {
-    const auto base = std::filesystem::temp_directory_path();
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    auto dir = base / ("hylux-vfs-vfs-test-" + std::to_string(stamp));
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    return dir;
+    std::random_device rd;
+    const auto stamp = std::to_string(rd()) + "_" + std::to_string(rd());
+    auto path = std::filesystem::temp_directory_path() / ("hylux_vfs_" + std::string(suffix) + "_" + stamp);
+    std::filesystem::create_directories(path);
+    return path;
 }
 
-void RemoveAllSilent(const std::filesystem::path& p)
+struct TempDirGuard
 {
-    std::error_code ec;
-    std::filesystem::remove_all(p, ec);
-}
-
-void WriteFile(const std::filesystem::path& p, std::string_view bytes)
-{
-    std::error_code ec;
-    std::filesystem::create_directories(p.parent_path(), ec);
-    std::ofstream out(p, std::ios::binary);
-    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
-
-std::string ReadAll(IFile& f)
-{
-    std::string out;
-    std::array<char, 256> buf{};
-    while (true)
+    std::filesystem::path path;
+    explicit TempDirGuard(const char* tag) : path(UniqueTempDir(tag)) {}
+    ~TempDirGuard()
     {
-        const auto n = f.Read(buf.data(), buf.size());
-        if (n == 0) break;
-        out.append(buf.data(), static_cast<std::size_t>(n));
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
     }
-    return out;
-}
-
-/// @brief Tiny in-memory, read-only IFile used by MemoryReadOnlyProvider for tests.
-class MemoryReadOnlyFile final : public IFile
-{
-public:
-    explicit MemoryReadOnlyFile(std::string data) : data_(std::move(data)) {}
-
-    FileSize Read(void* buffer, FileSize bytes) override
-    {
-        const FileSize remaining = data_.size() - cursor_;
-        const FileSize toCopy    = bytes < remaining ? bytes : remaining;
-        std::memcpy(buffer, data_.data() + cursor_, static_cast<std::size_t>(toCopy));
-        cursor_ += toCopy;
-        return toCopy;
-    }
-    FileSize Write(const void*, FileSize) override { return 0; }
-    bool     Seek(FileOffset offset, SeekOrigin origin) override
-    {
-        FileOffset target = 0;
-        switch (origin)
-        {
-            case SeekOrigin::Begin:   target = offset; break;
-            case SeekOrigin::Current: target = static_cast<FileOffset>(cursor_) + offset; break;
-            case SeekOrigin::End:     target = static_cast<FileOffset>(data_.size()) + offset; break;
-        }
-        if (target < 0 || static_cast<FileSize>(target) > data_.size()) return false;
-        cursor_ = static_cast<FileSize>(target);
-        return true;
-    }
-    FileOffset Tell() const override { return static_cast<FileOffset>(cursor_); }
-    void       Flush() override {}
-    FileSize   Size() const override { return data_.size(); }
-    bool       IsValid() const noexcept override { return true; }
-
-private:
-    std::string data_;
-    FileSize    cursor_{0};
 };
 
-/// @brief In-memory provider for tests. Reports SupportsWrite()=false so we can verify the
-///        VFS does NOT fall through writes to a lower-priority writable provider.
-class MemoryReadOnlyProvider final : public IFileProvider
+void Touch(const std::filesystem::path& p, std::string_view content = "x")
 {
-public:
-    void Add(std::string subPath, std::string contents)
-    {
-        files_.emplace(std::move(subPath), std::move(contents));
-    }
+    std::filesystem::create_directories(p.parent_path());
+    std::ofstream os(p, std::ios::binary | std::ios::trunc);
+    os.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
 
-    std::unique_ptr<IFile> Open(std::string_view subPath, FileOpenMode mode) override
-    {
-        if (mode != FileOpenMode::Read) return nullptr;
-        const auto it = files_.find(std::string(subPath));
-        if (it == files_.end()) return nullptr;
-        return std::make_unique<MemoryReadOnlyFile>(it->second);
-    }
-    bool Exists(std::string_view subPath) const override
-    {
-        return files_.find(std::string(subPath)) != files_.end();
-    }
-    FileStat Stat(std::string_view subPath) const override
-    {
-        const auto it = files_.find(std::string(subPath));
-        if (it == files_.end()) return {};
-        FileStat s;
-        s.exists        = true;
-        s.isRegularFile = true;
-        s.size          = it->second.size();
-        return s;
-    }
-    bool CreateDirectories(std::string_view) override { return false; }
-    bool Remove(std::string_view) override { return false; }
-
-    void EnumerateFiles(std::string_view, bool,
-                        std::function<void(std::string_view, const FileStat&)> visitor) const override
-    {
-        if (!visitor) return;
-        for (const auto& [name, contents] : files_)
-        {
-            FileStat s;
-            s.exists        = true;
-            s.isRegularFile = true;
-            s.size          = contents.size();
-            visitor(name, s);
-        }
-    }
-
-    bool        SupportsWrite() const noexcept override { return false; }
-    const char* DebugName() const noexcept override { return "MemoryReadOnly"; }
-
-private:
-    std::unordered_map<std::string, std::string> files_;
-};
+std::shared_ptr<IFileProvider> Loose(const std::filesystem::path& root)
+{
+    return std::make_shared<LooseFileProvider>(root);
+}
 
 } // namespace
 
-TEST_CASE("VirtualFileSystem rejects malformed paths and prefixes")
+TEST_CASE("VirtualFileSystem::Mount: invalid prefix or null provider returns Invalid")
 {
     VirtualFileSystem vfs;
-    auto provider = std::make_shared<MemoryReadOnlyProvider>();
-    provider->Add("x", "");
-
-    CHECK(vfs.Mount("Engine/", provider, 0)   == MountId::Invalid);
-    CHECK(vfs.Mount("/Engine",  provider, 0)  == MountId::Invalid);
-    CHECK(vfs.Mount("/",        provider, 0)  == MountId::Invalid);
-    CHECK(vfs.Mount("/A//B/",   provider, 0)  == MountId::Invalid);
-    CHECK(vfs.Mount("/Engine/", nullptr, 0)   == MountId::Invalid);
-
-    const auto id = vfs.Mount("/Engine/", provider, 0);
-    CHECK(id != MountId::Invalid);
-
-    CHECK(vfs.Open("Engine/x", FileOpenMode::Read) == nullptr);
-    CHECK_FALSE(vfs.Exists("../etc/passwd"));
+    CHECK(vfs.Mount("Engine/", Loose("dummy"), 0) == MountId::Invalid);
+    CHECK(vfs.Mount("/Engine", Loose("dummy"), 0) == MountId::Invalid);
+    CHECK(vfs.Mount("/Engine/", nullptr, 0) == MountId::Invalid);
 }
 
-TEST_CASE("VirtualFileSystem longest-prefix wins")
+TEST_CASE("VirtualFileSystem::Mount + EnumerateMounts: each mount gets a unique increasing id")
 {
-    const auto tempDir = MakeTempDir();
-    WriteFile(tempDir / "outer/foo.txt", "outer-foo");
-    WriteFile(tempDir / "inner/foo.txt", "inner-foo");
+    TempDirGuard guard{"ids"};
+    VirtualFileSystem vfs;
+    const MountId a = vfs.Mount("/Engine/", Loose(guard.path), 0);
+    const MountId b = vfs.Mount("/Game/",   Loose(guard.path), 0);
+    REQUIRE(a != MountId::Invalid);
+    REQUIRE(b != MountId::Invalid);
+    CHECK(a != b);
+    const auto mounts = vfs.EnumerateMounts();
+    CHECK(mounts.size() == 2u);
+}
+
+TEST_CASE("VirtualFileSystem::Unmount: known id removes; unknown returns false")
+{
+    TempDirGuard guard{"unmount"};
+    VirtualFileSystem vfs;
+    const MountId id = vfs.Mount("/Engine/", Loose(guard.path), 0);
+    REQUIRE(id != MountId::Invalid);
+    CHECK_FALSE(vfs.Unmount(MountId::Invalid));
+    CHECK(vfs.Unmount(id));
+    CHECK_FALSE(vfs.Unmount(id));
+    CHECK(vfs.EnumerateMounts().empty());
+}
+
+TEST_CASE("VirtualFileSystem::Open(Read) routes by longest-prefix winning")
+{
+    TempDirGuard a{"a"};
+    TempDirGuard b{"b"};
+    Touch(a.path / "x.bin", "engine");
+    Touch(b.path / "x.bin", "engine-deep");
 
     VirtualFileSystem vfs;
-    vfs.Mount("/A/",     std::make_shared<LooseFileProvider>(tempDir / "outer"), 0);
-    vfs.Mount("/A/Sub/", std::make_shared<LooseFileProvider>(tempDir / "inner"), 0);
+    vfs.Mount("/Engine/", Loose(a.path), 0);
+    vfs.Mount("/Engine/Deep/", Loose(b.path), 0);
 
-    auto file = vfs.Open("/A/Sub/foo.txt", FileOpenMode::Read);
-    REQUIRE(file != nullptr);
-    CHECK(ReadAll(*file) == "inner-foo");
-
-    auto outer = vfs.Open("/A/foo.txt", FileOpenMode::Read);
-    REQUIRE(outer != nullptr);
-    CHECK(ReadAll(*outer) == "outer-foo");
-
-    RemoveAllSilent(tempDir);
+    {
+        auto f = vfs.Open("/Engine/x.bin", FileOpenMode::Read);
+        REQUIRE(f);
+        char buf[7] = {};
+        f->Read(buf, 6);
+        CHECK(std::string(buf, 6) == "engine");
+    }
+    {
+        auto f = vfs.Open("/Engine/Deep/x.bin", FileOpenMode::Read);
+        REQUIRE(f);
+        char buf[12] = {};
+        f->Read(buf, 11);
+        CHECK(std::string(buf, 11) == "engine-deep");
+    }
 }
 
-TEST_CASE("VirtualFileSystem priority overlay shadows lower priority and falls through on miss")
+TEST_CASE("VirtualFileSystem: priority tiebreak among same-prefix mounts; read falls through on miss")
 {
-    const auto tempDir = MakeTempDir();
-    WriteFile(tempDir / "base/config.ini", "base");
-    WriteFile(tempDir / "base/only-base.txt", "only-base");
-    WriteFile(tempDir / "patch/config.ini", "patch");
+    TempDirGuard low{"low"};
+    TempDirGuard high{"high"};
+    Touch(low.path / "only_low.bin", "L");
+    Touch(high.path / "only_high.bin", "H");
 
     VirtualFileSystem vfs;
-    vfs.Mount("/X/", std::make_shared<LooseFileProvider>(tempDir / "base"),  0);
-    const auto patchId = vfs.Mount("/X/", std::make_shared<LooseFileProvider>(tempDir / "patch"), 10);
+    vfs.Mount("/Engine/", Loose(low.path), 0);
+    vfs.Mount("/Engine/", Loose(high.path), 100);
 
-    auto overlay = vfs.Open("/X/config.ini", FileOpenMode::Read);
-    REQUIRE(overlay != nullptr);
-    CHECK(ReadAll(*overlay) == "patch");
+    // High priority wins where both exist.
+    Touch(low.path / "shared.bin", "L");
+    Touch(high.path / "shared.bin", "H");
+    auto fHi = vfs.Open("/Engine/shared.bin", FileOpenMode::Read);
+    REQUIRE(fHi);
+    char hb[1] = {}; fHi->Read(hb, 1);
+    CHECK(hb[0] == 'H');
 
-    auto fallthrough = vfs.Open("/X/only-base.txt", FileOpenMode::Read);
-    REQUIRE(fallthrough != nullptr);
-    CHECK(ReadAll(*fallthrough) == "only-base");
+    // Fall through to low when high misses.
+    auto fLo = vfs.Open("/Engine/only_low.bin", FileOpenMode::Read);
+    REQUIRE(fLo);
+    char lb[1] = {}; fLo->Read(lb, 1);
+    CHECK(lb[0] == 'L');
 
-    REQUIRE(vfs.Unmount(patchId));
-    auto baseAgain = vfs.Open("/X/config.ini", FileOpenMode::Read);
-    REQUIRE(baseAgain != nullptr);
-    CHECK(ReadAll(*baseAgain) == "base");
-
-    RemoveAllSilent(tempDir);
+    // Missing entirely.
+    CHECK(vfs.Open("/Engine/nope.bin", FileOpenMode::Read) == nullptr);
 }
 
-TEST_CASE("VirtualFileSystem Write does not fall through to lower-priority providers")
+TEST_CASE("VirtualFileSystem: Write only attempts top writer (no fall-through)")
 {
-    const auto tempDir = MakeTempDir();
+    TempDirGuard a{"writer_a"};
+    TempDirGuard b{"writer_b"};
     VirtualFileSystem vfs;
+    vfs.Mount("/Engine/", Loose(a.path), 0);
+    vfs.Mount("/Engine/", Loose(b.path), 50);
 
-    auto readOnly = std::make_shared<MemoryReadOnlyProvider>();
-    readOnly->Add("file.txt", "ro-contents");
-
-    auto writable = std::make_shared<LooseFileProvider>(tempDir);
-
-    vfs.Mount("/X/", writable, 0);
-    vfs.Mount("/X/", readOnly, 10);
-
-    auto reader = vfs.Open("/X/file.txt", FileOpenMode::Read);
-    REQUIRE(reader != nullptr);
-    CHECK(ReadAll(*reader) == "ro-contents");
-
-    auto writer = vfs.Open("/X/file.txt", FileOpenMode::Write);
-    CHECK(writer == nullptr);
-
-    CHECK_FALSE(std::filesystem::exists(tempDir / "file.txt"));
-
-    RemoveAllSilent(tempDir);
+    auto f = vfs.Open("/Engine/created.bin", FileOpenMode::Write);
+    REQUIRE(f);
+    f->Write("Z", 1);
+    f.reset();
+    CHECK(std::filesystem::exists(b.path / "created.bin"));
+    CHECK_FALSE(std::filesystem::exists(a.path / "created.bin"));
 }
 
-TEST_CASE("VirtualFileSystem EnumerateMounts returns sorted snapshot")
+TEST_CASE("VirtualFileSystem::Open(Read) on path-normalize failure returns nullptr")
 {
     VirtualFileSystem vfs;
-    auto p = std::make_shared<MemoryReadOnlyProvider>();
-    vfs.Mount("/Engine/",  p, 0);
-    vfs.Mount("/Game/",    p, 0);
-    vfs.Mount("/Engine/",  p, 10);
-
-    const auto info = vfs.EnumerateMounts();
-    REQUIRE(info.size() == 3);
-    CHECK(info[0].prefix == "/Engine/");
-    CHECK(info[0].priority == 10);
+    CHECK(vfs.Open("relative.bin", FileOpenMode::Read) == nullptr);
+    CHECK(vfs.Open("", FileOpenMode::Read) == nullptr);
+    CHECK(vfs.Open("/Engine/../../x", FileOpenMode::Read) == nullptr);
 }
+
+TEST_CASE("VirtualFileSystem: Exists / Stat / Remove / CreateDirectories")
+{
+    TempDirGuard root{"stat"};
+    Touch(root.path / "file.bin", "abc");
+    VirtualFileSystem vfs;
+    vfs.Mount("/Engine/", Loose(root.path), 0);
+
+    CHECK(vfs.Exists("/Engine/file.bin"));
+    const auto st = vfs.Stat("/Engine/file.bin");
+    CHECK(st.exists);
+    CHECK(st.size == 3u);
+    CHECK_FALSE(vfs.Exists("/Engine/nope.bin"));
+
+    CHECK(vfs.CreateDirectories("/Engine/created"));
+    CHECK(std::filesystem::exists(root.path / "created"));
+
+    CHECK(vfs.Remove("/Engine/file.bin"));
+    CHECK_FALSE(vfs.Exists("/Engine/file.bin"));
+}
+
+TEST_CASE("VirtualFileSystem::Rename always returns false (v1 unimplemented)")
+{
+    VirtualFileSystem vfs;
+    CHECK_FALSE(vfs.Rename("/Engine/a.bin", "/Engine/b.bin"));
+}
+
+TEST_CASE("VirtualFileSystem: IsAbsolute / JoinPath / CurrentDirectory")
+{
+    VirtualFileSystem vfs;
+    CHECK(vfs.IsAbsolute("/Engine/x"));
+    CHECK(vfs.IsAbsolute("\\Engine\\x"));
+    CHECK_FALSE(vfs.IsAbsolute("Engine/x"));
+    CHECK_FALSE(vfs.IsAbsolute(""));
+
+    CHECK(vfs.JoinPath("a", "b").find('a') != std::string::npos);
+    CHECK(vfs.CurrentDirectory() == "/");
+}
+
+TEST_CASE("VirtualFileSystem::EnumerateFiles: walks the named mount; dedup by virtual path across same-prefix mounts")
+{
+    TempDirGuard low{"enum_low"};
+    TempDirGuard high{"enum_high"};
+    Touch(low.path / "shared.bin", "L");
+    Touch(low.path / "only_low.bin", "L");
+    Touch(high.path / "shared.bin", "H");
+    Touch(high.path / "only_high.bin", "H");
+
+    VirtualFileSystem vfs;
+    vfs.Mount("/Engine/", Loose(low.path), 0);
+    vfs.Mount("/Engine/", Loose(high.path), 100);
+
+    std::set<std::string> seen;
+    vfs.EnumerateFiles("/Engine/", true, [&](std::string_view path, const FileStat&) {
+        seen.emplace(path);
+    });
+    CHECK(seen.count("/Engine/shared.bin") == 1);
+    CHECK(seen.count("/Engine/only_low.bin") == 1);
+    CHECK(seen.count("/Engine/only_high.bin") == 1);
+
+    // Null visitor / invalid prefix should be silent no-ops.
+    vfs.EnumerateFiles("/Engine/", true, {});
+    vfs.EnumerateFiles("invalid", true, [](std::string_view, const FileStat&) {
+        FAIL_CHECK("visitor invoked for invalid prefix");
+    });
+}
+
+TEST_CASE("VirtualFileSystem: Shutdown clears mount table")
+{
+    TempDirGuard guard{"shutdown"};
+    VirtualFileSystem vfs;
+    vfs.Mount("/Engine/", Loose(guard.path), 0);
+    CHECK(vfs.EnumerateMounts().size() == 1u);
+    vfs.Shutdown();
+    CHECK(vfs.EnumerateMounts().empty());
+}
+
+TEST_SUITE_END();

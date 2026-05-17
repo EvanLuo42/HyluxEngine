@@ -9,7 +9,7 @@
 #include "Asset/AssetRef.h"
 #include "Asset/AssetTypeId.h"
 #include "Asset/Cooked/CookedHeader.h"
-#include "Asset/Guid.h"
+#include "Core/Guid.h"
 
 #include <cstdint>
 #include <optional>

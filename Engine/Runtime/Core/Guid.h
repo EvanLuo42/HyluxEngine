@@ -1,8 +1,9 @@
 /// @file
-/// @brief 128-bit GUID type. Asset identity is path-plus-GUID; the path is the human
-///        face of an asset, the GUID is the rename-safe stable id baked into the file
-///        at creation time. Byte layout matches the cooked .hass header so the bytes
-///        can be memcpy'd in/out without endian or packing fixups.
+/// @brief 128-bit GUID type. Engine-wide identity primitive: asset identity is
+///        path-plus-GUID, shader archive entries are keyed by GUID, future networking
+///        and replay systems will use the same type. Byte layout matches the cooked
+///        .hass header so the bytes can be memcpy'd in/out without endian or packing
+///        fixups.
 
 #pragma once
 
@@ -15,13 +16,13 @@
 #include <string>
 #include <string_view>
 
-namespace Hylux::Asset
+namespace Hylux
 {
 
-/// @brief 128-bit GUID stored as 16 bytes in network/big-endian-ish layout — actually
-///        the canonical RFC-4122 byte order, where ToString() formats bytes 0..15 as
-///        "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx". Comparison is byte-lexicographic;
-///        Hash() is a 64-bit fold suitable for unordered_map.
+/// @brief 128-bit GUID stored as 16 bytes in canonical RFC-4122 byte order, where
+///        ToString() formats bytes 0..15 as "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx".
+///        Comparison is byte-lexicographic; Hash() is a 64-bit fold suitable for
+///        unordered_map.
 struct Guid
 {
     static constexpr std::size_t kSize = 16;
@@ -58,12 +59,12 @@ struct Guid
     }
 };
 
-} // namespace Hylux::Asset
+} // namespace Hylux
 
 template<>
-struct std::hash<Hylux::Asset::Guid>
+struct std::hash<Hylux::Guid>
 {
-    std::size_t operator()(const Hylux::Asset::Guid& g) const noexcept
+    std::size_t operator()(const Hylux::Guid& g) const noexcept
     {
         return static_cast<std::size_t>(g.Hash());
     }

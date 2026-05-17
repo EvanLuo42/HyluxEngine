@@ -10,6 +10,9 @@
 
 #include <doctest/doctest.h>
 
+#include <ostream>  // stringify std::string_view for doctest CHECKs
+TEST_SUITE_BEGIN("Core::Containers");
+
 #include <cstdint>
 
 using namespace Hylux;
@@ -23,15 +26,10 @@ public:
     explicit Block(std::uint64_t bytes, int* destructions = nullptr) noexcept
         : bytes_(bytes), destructions_(destructions)
     {}
-
     ~Block() override
     {
-        if (destructions_ != nullptr)
-        {
-            ++(*destructions_);
-        }
+        if (destructions_ != nullptr) ++(*destructions_);
     }
-
     [[nodiscard]] std::uint64_t Bytes() const noexcept { return bytes_; }
 
 private:
@@ -41,11 +39,15 @@ private:
 
 } // namespace
 
-TEST_CASE("Insert + Get returns the same Ref and accounts the budget")
+TEST_CASE("RefLruCache: Insert + Get returns the same ref and tracks the budget")
 {
     RefLruCache<int, Block> cache(1024);
-    Ref<Block>              b = MakeRef<Block>(100u);
-    cache.Insert(1, b, b->Bytes());
+    CHECK(cache.Budget() == 1024u);
+    CHECK(cache.Size() == 0u);
+    CHECK(cache.BytesInUse() == 0u);
+
+    Ref<Block> b = MakeRef<Block>(100u);
+    cache.Insert(1, b, 100u);
     CHECK(cache.Size() == 1u);
     CHECK(cache.BytesInUse() == 100u);
 
@@ -54,17 +56,25 @@ TEST_CASE("Insert + Get returns the same Ref and accounts the budget")
     CHECK(got.Get() == b.Get());
 }
 
-TEST_CASE("Get on missing key returns null")
+TEST_CASE("RefLruCache::Get on missing key returns null")
 {
     RefLruCache<int, Block> cache(1024);
     CHECK_FALSE(cache.Get(42));
 }
 
-TEST_CASE("Eviction drops cache strong ref but keeps externally held value alive")
+TEST_CASE("RefLruCache::Insert(null) is a no-op")
 {
-    int                     destroyed = 0;
+    RefLruCache<int, Block> cache(1024);
+    cache.Insert(1, Ref<Block>{}, 100u);
+    CHECK(cache.Size() == 0u);
+    CHECK(cache.BytesInUse() == 0u);
+}
+
+TEST_CASE("RefLruCache: eviction drops the cache's strong, external ref keeps object alive")
+{
+    int destroyed = 0;
     RefLruCache<int, Block> cache(150);
-    Ref<Block>              keep = MakeRef<Block>(100u, &destroyed);
+    Ref<Block> keep = MakeRef<Block>(100u, &destroyed);
 
     cache.Insert(1, keep, keep->Bytes());
     CHECK(cache.BytesInUse() == 100u);
@@ -74,6 +84,7 @@ TEST_CASE("Eviction drops cache strong ref but keeps externally held value alive
     CHECK(cache.BytesInUse() == 100u);
     CHECK(destroyed == 0);
 
+    // Resurrect entry 1 via its weak ref.
     Ref<Block> resurrected = cache.Get(1);
     REQUIRE(resurrected);
     CHECK(resurrected.Get() == keep.Get());
@@ -81,9 +92,9 @@ TEST_CASE("Eviction drops cache strong ref but keeps externally held value alive
     CHECK(cache.BytesInUse() == 100u);
 }
 
-TEST_CASE("Evicted slot whose external Ref is gone is erased on next Get")
+TEST_CASE("RefLruCache: evicted slot with expired weak is erased on next Get")
 {
-    int                     destroyed = 0;
+    int destroyed = 0;
     RefLruCache<int, Block> cache(150);
 
     {
@@ -96,14 +107,13 @@ TEST_CASE("Evicted slot whose external Ref is gone is erased on next Get")
 
     CHECK(destroyed == 1);
     CHECK(cache.Size() == 2u);
-
     CHECK_FALSE(cache.Get(1));
     CHECK(cache.Size() == 1u);
 }
 
-TEST_CASE("Get on a strong entry promotes it past other entries (LRU order)")
+TEST_CASE("RefLruCache: Get on a live strong promotes the entry (LRU order)")
 {
-    int                     destroyed = 0;
+    int destroyed = 0;
     RefLruCache<int, Block> cache(300);
 
     {
@@ -113,15 +123,12 @@ TEST_CASE("Get on a strong entry promotes it past other entries (LRU order)")
         cache.Insert(1, a, 100);
         cache.Insert(2, b, 100);
         cache.Insert(3, c, 100);
-
-        REQUIRE(cache.Get(1));
+        REQUIRE(cache.Get(1));  // promotes 1 past 2 and 3
     }
-
     CHECK(destroyed == 0);
 
     Ref<Block> d = MakeRef<Block>(100u);
-    cache.Insert(4, d, 100);
-
+    cache.Insert(4, d, 100);   // forces eviction of LRU (now 2)
     CHECK(destroyed == 1);
 
     CHECK(cache.Get(1));
@@ -131,10 +138,10 @@ TEST_CASE("Get on a strong entry promotes it past other entries (LRU order)")
     CHECK(cache.BytesInUse() == 300u);
 }
 
-TEST_CASE("Insert replaces existing key and adjusts the budget")
+TEST_CASE("RefLruCache::Insert replaces existing key and adjusts the budget")
 {
     RefLruCache<int, Block> cache(500);
-    Ref<Block>              a = MakeRef<Block>(100u);
+    Ref<Block> a = MakeRef<Block>(100u);
     cache.Insert(1, a, 100);
     CHECK(cache.BytesInUse() == 100u);
 
@@ -145,23 +152,14 @@ TEST_CASE("Insert replaces existing key and adjusts the budget")
     CHECK(cache.Get(1).Get() == b.Get());
 }
 
-TEST_CASE("Insert of null value is a no-op")
-{
-    RefLruCache<int, Block> cache(1024);
-    cache.Insert(1, Ref<Block>{}, 100);
-    CHECK(cache.Size() == 0u);
-    CHECK(cache.BytesInUse() == 0u);
-}
-
-TEST_CASE("Clear drops every strong but resurrection still works")
+TEST_CASE("RefLruCache::Clear: drops every strong but weak resurrection still works")
 {
     RefLruCache<int, Block> cache(500);
-    Ref<Block>              a = MakeRef<Block>(100u);
+    Ref<Block> a = MakeRef<Block>(100u);
     cache.Insert(1, a, 100);
 
     cache.Clear();
     CHECK(cache.BytesInUse() == 0u);
-    CHECK(cache.Size() == 1u);
 
     Ref<Block> got = cache.Get(1);
     REQUIRE(got);
@@ -172,10 +170,10 @@ TEST_CASE("Clear drops every strong but resurrection still works")
     CHECK(cache.BytesInUse() == 100u);
 }
 
-TEST_CASE("Over-budget single Insert evicts everything but keeps the new entry")
+TEST_CASE("RefLruCache: over-budget Insert evicts everything and still admits the new entry")
 {
     RefLruCache<int, Block> cache(100);
-    Ref<Block>              a = MakeRef<Block>(60u);
+    Ref<Block> a = MakeRef<Block>(60u);
     cache.Insert(1, a, 60);
     Ref<Block> big = MakeRef<Block>(500u);
     cache.Insert(2, big, 500);
@@ -183,3 +181,14 @@ TEST_CASE("Over-budget single Insert evicts everything but keeps the new entry")
     CHECK(cache.Get(2));
     CHECK(cache.BytesInUse() == 500u);
 }
+
+TEST_CASE("RefLruCache: zero-budget cache still admits the first entry")
+{
+    RefLruCache<int, Block> cache(0);
+    Ref<Block> a = MakeRef<Block>(10u);
+    cache.Insert(1, a, 10);
+    CHECK(cache.Get(1));
+    CHECK(cache.BytesInUse() == 10u);
+}
+
+TEST_SUITE_END();

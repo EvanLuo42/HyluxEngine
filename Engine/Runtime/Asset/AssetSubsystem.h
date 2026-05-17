@@ -8,7 +8,7 @@
 #include "Asset/AssetBase.h"
 #include "Asset/AssetRegistry.h"
 #include "Asset/AssetTypeId.h"
-#include "Asset/Guid.h"
+#include "Core/Guid.h"
 #include "Core/Async/Future.h"
 #include "Core/Containers/RefLruCache.h"
 #include "Core/Memory/Ref.h"

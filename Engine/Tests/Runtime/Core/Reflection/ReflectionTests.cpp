@@ -1,339 +1,392 @@
 /// @file
-/// @brief Tests for the Hylux reflection subsystem: TypeRegistry, TypeInfo, Field,
-///        Method, EnumInfo, Any, and the HYLUX_REFLECT_* macros.
+/// @brief Tests for Hylux reflection: TypeId / TypeName / TypeInfo / Field / Method / EnumInfo /
+///        Any / TypeRegistry / ReflectionMacros.
 
 #include "Core/Reflection/Reflection.h"
 
 #include <doctest/doctest.h>
 
-#include <cstdint>
+#include <array>
+#include <ostream>
 #include <span>
-#include <string_view>
-
-namespace HyluxReflectionTests
-{
-
-enum class Mood : std::int32_t
-{
-    Sad   = 0,
-    Meh   = 1,
-    Happy = 2,
-};
-
-/// @brief Polymorphic reflected base used by the tests below.
-class Animal
-{
-    HYLUX_REFLECT_BODY(Animal)
-public:
-    Animal() = default;
-    virtual ~Animal() = default;
-
-    int legs_{4};
-
-    int Bark(int times) { return legs_ * times; }
-    [[nodiscard]] int Counted() const { return legs_; }
-};
-
-/// @brief Reflected subclass — used to exercise the base chain and Cast<>.
-class Dog : public Animal
-{
-    HYLUX_REFLECT_BODY(Dog)
-public:
-    Dog() = default;
-
-    float happiness_{0.5f};
-};
-
-/// @brief Reflected type with no methods, used to exercise field-only registration.
-class JustFields
-{
-    HYLUX_REFLECT_BODY_POD(JustFields)
-public:
-    int a_{1};
-    int b_{2};
-};
-
-} // namespace HyluxReflectionTests
-
-HYLUX_REFLECT_CLASS_BEGIN(HyluxReflectionTests::Animal)
-HYLUX_REFLECT_FIELD(legs_)
-HYLUX_REFLECT_METHOD(Bark)
-HYLUX_REFLECT_METHOD(Counted)
-HYLUX_REFLECT_CLASS_END(HyluxReflectionTests::Animal)
-
-HYLUX_REFLECT_CLASS_BEGIN(HyluxReflectionTests::Dog)
-HYLUX_REFLECT_BASE(HyluxReflectionTests::Animal)
-HYLUX_REFLECT_FIELD(happiness_)
-HYLUX_REFLECT_CLASS_END(HyluxReflectionTests::Dog)
-
-HYLUX_REFLECT_CLASS_BEGIN(HyluxReflectionTests::JustFields)
-HYLUX_REFLECT_FIELD(a_)
-HYLUX_REFLECT_FIELD_FLAGS(b_, ::Hylux::FieldFlags::ReadOnly | ::Hylux::FieldFlags::Serialize)
-HYLUX_REFLECT_CLASS_END(HyluxReflectionTests::JustFields)
-
-HYLUX_REFLECT_ENUM_BEGIN(HyluxReflectionTests::Mood)
-HYLUX_REFLECT_ENUM_VALUE(Sad)
-HYLUX_REFLECT_ENUM_VALUE(Meh)
-HYLUX_REFLECT_ENUM_VALUE(Happy)
-HYLUX_REFLECT_ENUM_END()
+#include <string>
+#include <utility>
 
 using namespace Hylux;
-using HyluxReflectionTests::Animal;
-using HyluxReflectionTests::Dog;
-using HyluxReflectionTests::JustFields;
-using HyluxReflectionTests::Mood;
 
-// ---- TypeId / TypeName ------------------------------------------------------
+TEST_SUITE_BEGIN("Core::Reflection");
 
-TEST_CASE("TypeIdOf is stable, non-zero, and distinct for distinct types")
+// ---- Reflected fixtures (file scope so AutoRegister runs before main) -----
+
+namespace
 {
-    constexpr TypeId idAnimal = TypeIdOf<Animal>();
-    constexpr TypeId idDog    = TypeIdOf<Dog>();
-    static_assert(IsValid(idAnimal));
-    static_assert(IsValid(idDog));
-    static_assert(idAnimal != idDog);
-    CHECK(IsValid(idAnimal));
-    CHECK(idAnimal != idDog);
+
+class ReflectableBase
+{
+    HYLUX_REFLECT_BODY(ReflectableBase)
+public:
+    virtual ~ReflectableBase() = default;
+    int baseField{1};
+    int Echo(int v) const { return v + 10; }
+    void Inc() { ++baseField; }
+};
+
+class ReflectableDerived : public ReflectableBase
+{
+    HYLUX_REFLECT_BODY(ReflectableDerived)
+public:
+    int derivedField{0};
+    int Add(int a, int b) const { return a + b; }
+};
+
+enum class ReflectedColor : std::uint16_t
+{
+    Red   = 1,
+    Green = 2,
+    Blue  = 3,
+};
+
+} // namespace
+
+HYLUX_REFLECT_CLASS_BEGIN(ReflectableBase)
+    HYLUX_REFLECT_FIELD(baseField)
+    HYLUX_REFLECT_METHOD(Echo)
+    HYLUX_REFLECT_METHOD(Inc)
+HYLUX_REFLECT_CLASS_END(ReflectableBase)
+
+HYLUX_REFLECT_CLASS_BEGIN(ReflectableDerived)
+    HYLUX_REFLECT_BASE(ReflectableBase)
+    HYLUX_REFLECT_FIELD_FLAGS(derivedField, ::Hylux::FieldFlags::ReadOnly)
+    HYLUX_REFLECT_METHOD(Add)
+HYLUX_REFLECT_CLASS_END(ReflectableDerived)
+
+HYLUX_REFLECT_ENUM_BEGIN(ReflectedColor)
+    HYLUX_REFLECT_ENUM_VALUE(Red)
+    HYLUX_REFLECT_ENUM_VALUE(Green)
+    HYLUX_REFLECT_ENUM_VALUE(Blue)
+HYLUX_REFLECT_ENUM_END()
+
+// ---- TypeId / TypeName ----------------------------------------------------
+
+TEST_CASE("TypeId: invalid sentinel; ToU64; IsValid")
+{
+    static_assert(static_cast<std::uint64_t>(TypeId::Invalid) == 0);
+    CHECK_FALSE(IsValid(TypeId::Invalid));
+    CHECK(IsValid(TypeIdOf<int>()));
     CHECK(ToU64(TypeId::Invalid) == 0u);
 }
 
-TEST_CASE("TypeName returns a non-empty string and strips the class keyword")
+TEST_CASE("TypeIdOf: stable per type; distinguishes cv-qualifiers and pointers")
 {
-    constexpr std::string_view name = TypeName<Animal>();
-    CHECK_FALSE(name.empty());
-    CHECK(name.find("class ") == std::string_view::npos);
-    CHECK(name.find("Animal") != std::string_view::npos);
+    static_assert(TypeIdOf<int>() == TypeIdOf<int>());
+    CHECK(TypeIdOf<int>() != TypeIdOf<float>());
+    CHECK(TypeIdOf<int>() != TypeIdOf<const int>());  // TypeName preserves cv
+    CHECK(TypeIdOf<int>() != TypeIdOf<int*>());
 }
 
-// ---- TypeRegistry / TypeInfo ------------------------------------------------
-
-TEST_CASE("Reflected types appear in the global registry under their TypeId")
+TEST_CASE("TypeName: strips MSVC 'class '/'struct '/'enum ' prefixes")
 {
-    const TypeInfo* animal = TypeRegistry::Get().FindType(TypeIdOf<Animal>());
-    REQUIRE(animal != nullptr);
-    CHECK(animal->Id() == TypeIdOf<Animal>());
-    CHECK(animal->Size() == sizeof(Animal));
-    CHECK(animal->Alignment() == alignof(Animal));
-    CHECK(animal->Base() == nullptr);
+    constexpr auto baseName = TypeName<ReflectableBase>();
+    const bool baseStartsWithClassKw = baseName.size() >= 6 &&
+                                       baseName.substr(0, 6) == std::string_view{"class "};
+    CHECK_FALSE(baseStartsWithClassKw);
+    CHECK(baseName.find("ReflectableBase") != std::string_view::npos);
+
+    constexpr auto enumName = TypeName<ReflectedColor>();
+    const bool enumStartsWithEnumKw = enumName.size() >= 5 &&
+                                      enumName.substr(0, 5) == std::string_view{"enum "};
+    CHECK_FALSE(enumStartsWithEnumKw);
+    CHECK(enumName.find("ReflectedColor") != std::string_view::npos);
 }
 
-TEST_CASE("Reflected types are also discoverable by canonical name")
+// ---- TypeRegistry --------------------------------------------------------
+
+TEST_CASE("TypeRegistry: AutoRegister populated ReflectableBase / ReflectableDerived / ReflectedColor")
 {
-    const TypeInfo* byId   = TypeRegistry::Get().FindType(TypeIdOf<Animal>());
-    const TypeInfo* byName = TypeRegistry::Get().FindType(TypeName<Animal>());
-    REQUIRE(byId != nullptr);
-    REQUIRE(byName != nullptr);
-    CHECK(byId == byName);
+    auto& reg = TypeRegistry::Get();
+    const TypeInfo* base = reg.FindType(TypeIdOf<ReflectableBase>());
+    const TypeInfo* derived = reg.FindType(TypeIdOf<ReflectableDerived>());
+    const EnumInfo* color = reg.FindEnum(TypeIdOf<ReflectedColor>());
+    REQUIRE(base != nullptr);
+    REQUIRE(derived != nullptr);
+    REQUIRE(color != nullptr);
+
+    CHECK(reg.FindType(base->Name()) == base);
+    CHECK(reg.FindEnum(color->Name()) == color);
 }
 
-TEST_CASE("Animal::GetStaticType returns the registered TypeInfo")
+TEST_CASE("TypeRegistry::FindType: unknown id / name returns nullptr")
 {
-    const TypeInfo* fromMacro = Animal::GetStaticType();
-    REQUIRE(fromMacro != nullptr);
-    CHECK(fromMacro == TypeRegistry::Get().FindType(TypeIdOf<Animal>()));
+    auto& reg = TypeRegistry::Get();
+    CHECK(reg.FindType(TypeId::Invalid) == nullptr);
+    CHECK(reg.FindType(std::string_view{"::Nonexistent::Type::That::Should::Not::Exist"}) == nullptr);
+    CHECK(reg.FindEnum(TypeId::Invalid) == nullptr);
 }
 
-TEST_CASE("GetType on an instance dispatches virtually to the most-derived type")
+TEST_CASE("TypeRegistry::AllTypes / AllEnums: snapshot includes the reflected fixtures")
 {
-    Dog dog;
-    Animal* asBase = &dog;
-    REQUIRE(asBase->GetType() != nullptr);
-    CHECK(asBase->GetType() == Dog::GetStaticType());
+    auto& reg = TypeRegistry::Get();
+    bool baseFound = false;
+    for (const TypeInfo* t : reg.AllTypes())
+    {
+        if (t->Id() == TypeIdOf<ReflectableBase>()) baseFound = true;
+    }
+    CHECK(baseFound);
+
+    bool colorFound = false;
+    for (const EnumInfo* e : reg.AllEnums())
+    {
+        if (e->Id() == TypeIdOf<ReflectedColor>()) colorFound = true;
+    }
+    CHECK(colorFound);
 }
 
-TEST_CASE("TypeInfo::IsA walks the reflected base chain")
+// ---- TypeInfo / IsA / Construct / Cast ------------------------------------
+
+TEST_CASE("TypeInfo: id/name/size/alignment from reflected type")
 {
-    const TypeInfo* dog    = Dog::GetStaticType();
-    const TypeInfo* animal = Animal::GetStaticType();
-    REQUIRE(dog != nullptr);
-    REQUIRE(animal != nullptr);
-    CHECK(dog->IsA(dog));
-    CHECK(dog->IsA(animal));
-    CHECK_FALSE(animal->IsA(dog));
-    CHECK_FALSE(dog->IsA(nullptr));
+    const TypeInfo* derived = ReflectableDerived::GetStaticType();
+    REQUIRE(derived != nullptr);
+    CHECK(derived->Id() == TypeIdOf<ReflectableDerived>());
+    CHECK(derived->Size() == sizeof(ReflectableDerived));
+    CHECK(derived->Alignment() == alignof(ReflectableDerived));
+    REQUIRE(derived->Base() != nullptr);
+    CHECK(derived->Base()->Id() == TypeIdOf<ReflectableBase>());
 }
 
-TEST_CASE("Cast<T>() returns a typed pointer for a matching base chain")
+TEST_CASE("TypeInfo::IsA: null, self, base, unrelated")
 {
-    Dog dog;
-    Animal* base = &dog;
-    Dog* roundTrip = Cast<Dog>(base);
-    CHECK(roundTrip == &dog);
-
-    Animal animalOnly;
-    Animal* basePtr = &animalOnly;
-    CHECK(Cast<Dog>(basePtr) == nullptr);
+    const TypeInfo* base = ReflectableBase::GetStaticType();
+    const TypeInfo* derived = ReflectableDerived::GetStaticType();
+    REQUIRE(base != nullptr);
+    REQUIRE(derived != nullptr);
+    CHECK(base->IsA(base));
+    CHECK(derived->IsA(base));
+    CHECK_FALSE(base->IsA(derived));
+    CHECK_FALSE(base->IsA(nullptr));
 }
 
-TEST_CASE("TypeInfo construction/destruction lifecycle round-trips")
+TEST_CASE("TypeInfo: NewInstance / Destroy roundtrip; trait queries")
 {
-    const TypeInfo* dog = Dog::GetStaticType();
-    REQUIRE(dog != nullptr);
-    REQUIRE(dog->IsDefaultConstructible());
+    const TypeInfo* base = ReflectableBase::GetStaticType();
+    REQUIRE(base != nullptr);
+    CHECK(base->IsDefaultConstructible());
+    CHECK(base->IsCopyConstructible());
+    CHECK(base->IsMoveConstructible());
 
-    Dog* instance = dog->Construct<Dog>();
+    void* raw = base->NewInstance();
+    REQUIRE(raw != nullptr);
+    base->Destroy(raw);
+
+    base->Destroy(nullptr);  // no-op
+}
+
+TEST_CASE("TypeInfo::Construct<T>: typed construction for default-constructible T")
+{
+    const TypeInfo* derived = ReflectableDerived::GetStaticType();
+    REQUIRE(derived != nullptr);
+    ReflectableDerived* instance = derived->Construct<ReflectableDerived>();
     REQUIRE(instance != nullptr);
-    CHECK(instance->legs_ == 4);
-    dog->Destroy(instance);
+    CHECK(instance->baseField == 1);
+    CHECK(instance->derivedField == 0);
+    derived->Destroy(instance);
 }
 
-TEST_CASE("TypeInfo can copy-construct a reflected instance")
+TEST_CASE("TypeInfo: CopyInstance / MoveInstance produce equivalent objects")
 {
-    const TypeInfo* animal = Animal::GetStaticType();
-    REQUIRE(animal->IsCopyConstructible());
-
-    Animal source;
-    source.legs_ = 11;
-    auto* copy = static_cast<Animal*>(animal->CopyInstance(&source));
-    REQUIRE(copy != nullptr);
-    CHECK(copy->legs_ == 11);
-    animal->Destroy(copy);
+    const TypeInfo* base = ReflectableBase::GetStaticType();
+    REQUIRE(base != nullptr);
+    ReflectableBase* a = base->Construct<ReflectableBase>();
+    a->baseField = 99;
+    auto* copied = static_cast<ReflectableBase*>(base->CopyInstance(a));
+    REQUIRE(copied != nullptr);
+    CHECK(copied->baseField == 99);
+    auto* moved = static_cast<ReflectableBase*>(base->MoveInstance(a));
+    REQUIRE(moved != nullptr);
+    CHECK(moved->baseField == 99);
+    base->Destroy(a);
+    base->Destroy(copied);
+    base->Destroy(moved);
 }
 
-// ---- Field -------------------------------------------------------------------
-
-TEST_CASE("Field exposes name, offset, type id, and value access")
+TEST_CASE("TypeInfo::FindField / FindMethod walk the base chain")
 {
-    const TypeInfo* animal = Animal::GetStaticType();
-    const Field* legs = animal->FindField("legs_");
-    REQUIRE(legs != nullptr);
-    CHECK(legs->Name() == "legs_");
-    CHECK(legs->Type() == TypeIdOf<int>());
-    CHECK(legs->Offset() == offsetof(Animal, legs_));
+    const TypeInfo* derived = ReflectableDerived::GetStaticType();
+    REQUIRE(derived != nullptr);
 
-    Animal instance;
-    legs->Set<int>(&instance, 99);
-    CHECK(legs->Get<int>(&instance) == 99);
-    CHECK(instance.legs_ == 99);
+    const Field* baseFieldOnDerived = derived->FindField("baseField");
+    REQUIRE(baseFieldOnDerived != nullptr);
+    CHECK(baseFieldOnDerived->Offset() == offsetof(ReflectableBase, baseField));
+
+    const Method* echo = derived->FindMethod("Echo");
+    REQUIRE(echo != nullptr);
+    CHECK(echo->Name() == "Echo");
+
+    CHECK(derived->FindField("nope") == nullptr);
+    CHECK(derived->FindMethod("nope") == nullptr);
 }
 
-TEST_CASE("FindField walks the base chain to resolve inherited members")
+TEST_CASE("Cast<T>: null, base->derived through reflected chain, unrelated returns null")
 {
-    const TypeInfo* dog = Dog::GetStaticType();
-    const Field* inherited = dog->FindField("legs_");
-    const Field* own       = dog->FindField("happiness_");
-    REQUIRE(inherited != nullptr);
-    REQUIRE(own != nullptr);
-    CHECK(inherited->Type() == TypeIdOf<int>());
-    CHECK(own->Type() == TypeIdOf<float>());
+    ReflectableDerived d;
+    ReflectableBase* basePtr = &d;
+    CHECK(Cast<ReflectableDerived>(basePtr) == &d);
+    CHECK(Cast<ReflectableBase>(basePtr) == &d);
+    ReflectableBase* nullPtr = nullptr;
+    CHECK(Cast<ReflectableDerived>(nullPtr) == nullptr);
+
+    const ReflectableDerived cd;
+    const ReflectableBase* cbasePtr = &cd;
+    CHECK(Cast<const ReflectableDerived>(cbasePtr) == &cd);
 }
 
-TEST_CASE("FieldFlags compose bitwise and HasFlag detects membership")
-{
-    const FieldFlags combined = FieldFlags::ReadOnly | FieldFlags::Serialize;
-    CHECK(HasFlag(combined, FieldFlags::ReadOnly));
-    CHECK(HasFlag(combined, FieldFlags::Serialize));
-    CHECK_FALSE(HasFlag(combined, FieldFlags::Transient));
+// ---- Field ---------------------------------------------------------------
 
-    const TypeInfo* podType = JustFields::GetStaticType();
-    REQUIRE(podType != nullptr);
-    const Field* b = podType->FindField("b_");
-    REQUIRE(b != nullptr);
-    CHECK(HasFlag(b->Flags(), FieldFlags::ReadOnly));
-    CHECK(HasFlag(b->Flags(), FieldFlags::Serialize));
+TEST_CASE("FieldFlags: bitwise ops + HasFlag")
+{
+    constexpr FieldFlags combined = FieldFlags::ReadOnly | FieldFlags::Serialize;
+    static_assert(HasFlag(combined, FieldFlags::ReadOnly));
+    static_assert(HasFlag(combined, FieldFlags::Serialize));
+    static_assert(!HasFlag(combined, FieldFlags::EditorOnly));
+    static_assert((combined & FieldFlags::ReadOnly) == FieldFlags::ReadOnly);
+    static_assert(!HasFlag(FieldFlags::None, FieldFlags::None));
 }
 
-// ---- Method ------------------------------------------------------------------
-
-TEST_CASE("Method records return type, parameter types, and arity")
+TEST_CASE("Field: GetPtr offsets / typed Get / Set / ReadOnly flag")
 {
-    const TypeInfo* animal = Animal::GetStaticType();
-    const Method* bark = animal->FindMethod("Bark");
-    REQUIRE(bark != nullptr);
-    CHECK(bark->Name() == "Bark");
-    CHECK(bark->Arity() == 1u);
-    CHECK(bark->ReturnType() == TypeIdOf<int>());
-    REQUIRE(bark->ParamTypes().size() == 1u);
-    CHECK(bark->ParamTypes()[0] == TypeIdOf<int>());
+    const TypeInfo* base = ReflectableBase::GetStaticType();
+    REQUIRE(base != nullptr);
+    const Field* f = base->FindField("baseField");
+    REQUIRE(f != nullptr);
+    CHECK(f->Name() == "baseField");
+    CHECK(f->Type() == TypeIdOf<int>());
+    CHECK(f->Offset() == offsetof(ReflectableBase, baseField));
+    CHECK(f->Flags() == FieldFlags::None);
+
+    ReflectableBase obj;
+    obj.baseField = 5;
+    CHECK(f->Get<int>(&obj) == 5);
+    f->Set<int>(&obj, 17);
+    CHECK(obj.baseField == 17);
+
+    const TypeInfo* derived = ReflectableDerived::GetStaticType();
+    const Field* derivedF = derived->FindField("derivedField");
+    REQUIRE(derivedF != nullptr);
+    CHECK(HasFlag(derivedF->Flags(), FieldFlags::ReadOnly));
 }
 
-TEST_CASE("Method::Invoke runs a non-const member with Any-wrapped args")
-{
-    const TypeInfo* animal = Animal::GetStaticType();
-    const Method* bark = animal->FindMethod("Bark");
-    REQUIRE(bark != nullptr);
+// ---- Method --------------------------------------------------------------
 
-    Animal instance;
-    instance.legs_ = 4;
-    Any times = Any::Make<int>(3);
-    Any args[] = {times};
-    Any result = bark->Invoke(&instance, std::span<Any>(args));
+TEST_CASE("Method::Bind: returns ReturnType, ParamTypes; Invoke runs the member")
+{
+    const Method* echo = ReflectableBase::GetStaticType()->FindMethod("Echo");
+    REQUIRE(echo != nullptr);
+    CHECK(echo->ReturnType() == TypeIdOf<int>());
+    CHECK(echo->Arity() == 1u);
+    CHECK(echo->ParamTypes().size() == 1u);
+    CHECK(echo->ParamTypes()[0] == TypeIdOf<int>());
+
+    ReflectableBase obj;
+    std::array<Any, 1> args = {Any::Make<int>(5)};
+    Any result = echo->Invoke(&obj, std::span<Any>(args.data(), args.size()));
     CHECK(result.Type() == TypeIdOf<int>());
-    CHECK(result.Get<int>() == 12);
+    CHECK(result.Get<int>() == 15);
 }
 
-TEST_CASE("Method::Invoke runs a const member with no args")
+TEST_CASE("Method::Invoke: void-returning method yields empty Any")
 {
-    const TypeInfo* animal = Animal::GetStaticType();
-    const Method* counted = animal->FindMethod("Counted");
-    REQUIRE(counted != nullptr);
-    CHECK(counted->Arity() == 0u);
+    const Method* inc = ReflectableBase::GetStaticType()->FindMethod("Inc");
+    REQUIRE(inc != nullptr);
+    CHECK(inc->Arity() == 0u);
+    ReflectableBase obj;
+    Any result = inc->Invoke(&obj, std::span<Any>{});
+    CHECK(result.IsEmpty());
+    CHECK(obj.baseField == 2);
+}
 
-    Animal instance;
-    instance.legs_ = 7;
-    Any result = counted->Invoke(&instance, std::span<Any>{});
+TEST_CASE("Method::Invoke: two-arg const method via reflected Add")
+{
+    const Method* add = ReflectableDerived::GetStaticType()->FindMethod("Add");
+    REQUIRE(add != nullptr);
+    CHECK(add->Arity() == 2u);
+    CHECK(add->ReturnType() == TypeIdOf<int>());
+
+    ReflectableDerived obj;
+    std::array<Any, 2> args = {Any::Make<int>(3), Any::Make<int>(4)};
+    Any result = add->Invoke(&obj, std::span<Any>(args.data(), args.size()));
     CHECK(result.Get<int>() == 7);
 }
 
-// ---- Any ---------------------------------------------------------------------
+// ---- EnumInfo ------------------------------------------------------------
 
-TEST_CASE("Default Any is empty")
+TEST_CASE("EnumInfo: id / name / size / entries")
 {
-    Any empty;
-    CHECK(empty.IsEmpty());
-    CHECK(empty.Type() == TypeId::Invalid);
-    CHECK(empty.RawPtr() == nullptr);
-    CHECK(empty.TryGet<int>() == nullptr);
+    const EnumInfo* color = TypeRegistry::Get().FindEnum(TypeIdOf<ReflectedColor>());
+    REQUIRE(color != nullptr);
+    CHECK(color->Id() == TypeIdOf<ReflectedColor>());
+    CHECK(color->Size() == sizeof(ReflectedColor));
+    CHECK(color->Entries().size() == 3u);
+    CHECK(color->Entries()[0].name == "Red");
+    CHECK(color->Entries()[0].value == 1);
 }
 
-TEST_CASE("Any::Make owns a copy and exposes the value via Get / TryGet")
+TEST_CASE("EnumInfo: NameOf / ValueOf round-trip, missing returns nullopt")
 {
-    Any boxed = Any::Make<int>(42);
-    CHECK_FALSE(boxed.IsEmpty());
-    CHECK(boxed.IsOwning());
-    CHECK(boxed.Type() == TypeIdOf<int>());
-    REQUIRE(boxed.TryGet<int>() != nullptr);
-    CHECK(*boxed.TryGet<int>() == 42);
-    CHECK(boxed.Get<int>() == 42);
-    CHECK(boxed.TryGet<float>() == nullptr);
+    const EnumInfo* color = TypeRegistry::Get().FindEnum(TypeIdOf<ReflectedColor>());
+    REQUIRE(color != nullptr);
+    CHECK(color->NameOf(1) == std::string_view{"Red"});
+    CHECK(color->NameOf(3) == std::string_view{"Blue"});
+    CHECK_FALSE(color->NameOf(99).has_value());
+
+    CHECK(color->ValueOf("Green") == 2);
+    CHECK_FALSE(color->ValueOf("Yellow").has_value());
 }
 
-TEST_CASE("Any::Borrow aliases an external value without owning it")
+// ---- Any -----------------------------------------------------------------
+
+TEST_CASE("Any: default state is empty")
+{
+    Any a;
+    CHECK(a.IsEmpty());
+    CHECK_FALSE(a.IsOwning());
+    CHECK(a.RawPtr() == nullptr);
+    CHECK(a.Type() == TypeId::Invalid);
+    CHECK(a.TryGet<int>() == nullptr);
+}
+
+TEST_CASE("Any::Make: owning copy; Type matches; TryGet typed access")
+{
+    Any a = Any::Make<int>(7);
+    CHECK_FALSE(a.IsEmpty());
+    CHECK(a.IsOwning());
+    CHECK(a.Type() == TypeIdOf<int>());
+    REQUIRE(a.TryGet<int>() != nullptr);
+    CHECK(*a.TryGet<int>() == 7);
+    CHECK(a.Get<int>() == 7);
+    CHECK(a.TryGet<float>() == nullptr);
+}
+
+TEST_CASE("Any: copy shares storage; destroying one does not free underlying value")
+{
+    Any a = Any::Make<int>(42);
+    {
+        Any b = a;
+        CHECK(b.Get<int>() == 42);
+    }
+    CHECK(a.Get<int>() == 42);
+}
+
+TEST_CASE("Any::Borrow: non-owning, TryGet returns the pointer; cv stripped for TypeId")
 {
     int value = 99;
-    Any borrowed = Any::Borrow(&value);
-    CHECK_FALSE(borrowed.IsOwning());
-    CHECK(borrowed.Type() == TypeIdOf<int>());
-    CHECK(borrowed.RawPtr() == &value);
+    Any a = Any::Borrow<int>(&value);
+    CHECK_FALSE(a.IsOwning());
+    CHECK(a.Type() == TypeIdOf<int>());
+    REQUIRE(a.TryGet<int>() == &value);
 
-    borrowed.Get<int>() = 123;
-    CHECK(value == 123);
+    const int constValue = 5;
+    Any cb = Any::Borrow<const int>(&constValue);
+    CHECK(cb.Type() == TypeIdOf<int>());  // remove_cv applied
 }
 
-// ---- EnumInfo ----------------------------------------------------------------
-
-TEST_CASE("Enum registration captures all enumerators in both directions")
-{
-    const EnumInfo* mood = TypeRegistry::Get().FindEnum(TypeIdOf<Mood>());
-    REQUIRE(mood != nullptr);
-    CHECK(mood->Size() == sizeof(Mood));
-    CHECK(mood->Entries().size() == 3u);
-
-    CHECK(mood->NameOf(static_cast<std::int64_t>(Mood::Sad))   == "Sad");
-    CHECK(mood->NameOf(static_cast<std::int64_t>(Mood::Meh))   == "Meh");
-    CHECK(mood->NameOf(static_cast<std::int64_t>(Mood::Happy)) == "Happy");
-    CHECK_FALSE(mood->NameOf(999).has_value());
-
-    CHECK(mood->ValueOf("Happy") == static_cast<std::int64_t>(Mood::Happy));
-    CHECK(mood->ValueOf("Sad")   == static_cast<std::int64_t>(Mood::Sad));
-    CHECK_FALSE(mood->ValueOf("Furious").has_value());
-}
-
-TEST_CASE("Enums are also findable by canonical name")
-{
-    const EnumInfo* byId   = TypeRegistry::Get().FindEnum(TypeIdOf<Mood>());
-    const EnumInfo* byName = TypeRegistry::Get().FindEnum(TypeName<Mood>());
-    REQUIRE(byId != nullptr);
-    REQUIRE(byName != nullptr);
-    CHECK(byId == byName);
-}
+TEST_SUITE_END();

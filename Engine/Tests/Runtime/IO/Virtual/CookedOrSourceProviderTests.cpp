@@ -1,6 +1,5 @@
 /// @file
-/// @brief Tests for CookedOrSourceProvider — cooked-first lookup, source fallback,
-///        write-routing, null-source shipped-build behaviour.
+/// @brief Tests for CookedOrSourceProvider's two-tier fallback semantics.
 
 #include "Core/IO/IFile.h"
 #include "Core/IO/Virtual/Providers/CookedOrSourceProvider.h"
@@ -8,174 +7,190 @@
 
 #include <doctest/doctest.h>
 
-#include <array>
-#include <chrono>
+#include <ostream>  // stringify std::string_view for doctest CHECKs
+TEST_SUITE_BEGIN("IO::Virtual");
+
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
+#include <set>
 #include <string>
-#include <system_error>
 
 using namespace Hylux;
 
 namespace
 {
 
-std::filesystem::path MakeTempDir(const char* tag)
+std::filesystem::path UniqueTempDir(const char* suffix)
 {
-    const auto base  = std::filesystem::temp_directory_path();
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    auto       dir   = base / (std::string{"hylux-cs-test-"} + tag + "-" + std::to_string(stamp));
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    return dir;
+    std::random_device rd;
+    const auto stamp = std::to_string(rd()) + "_" + std::to_string(rd());
+    auto path = std::filesystem::temp_directory_path() / ("hylux_cos_" + std::string(suffix) + "_" + stamp);
+    std::filesystem::create_directories(path);
+    return path;
 }
 
-void RemoveAllSilent(const std::filesystem::path& p)
+struct TempRoots
 {
-    std::error_code ec;
-    std::filesystem::remove_all(p, ec);
-}
-
-void WriteFile(const std::filesystem::path& path, std::string_view bytes)
-{
-    std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
-    std::ofstream out(path, std::ios::binary);
-    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
-
-std::string ReadAll(IFile& f)
-{
-    std::string           out;
-    std::array<char, 256> buf{};
-    while (true)
+    std::filesystem::path cookedDir;
+    std::filesystem::path sourceDir;
+    explicit TempRoots(const char* tag)
+        : cookedDir(UniqueTempDir((std::string(tag) + "_cooked").c_str())),
+          sourceDir(UniqueTempDir((std::string(tag) + "_source").c_str())) {}
+    ~TempRoots()
     {
-        const auto n = f.Read(buf.data(), buf.size());
-        if (n == 0)
-        {
-            break;
-        }
-        out.append(buf.data(), static_cast<std::size_t>(n));
+        std::error_code ec;
+        std::filesystem::remove_all(cookedDir, ec);
+        std::filesystem::remove_all(sourceDir, ec);
     }
-    return out;
+};
+
+void Touch(const std::filesystem::path& p, std::string_view content = "x")
+{
+    std::filesystem::create_directories(p.parent_path());
+    std::ofstream os(p, std::ios::binary | std::ios::trunc);
+    os.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+std::shared_ptr<IFileProvider> Loose(const std::filesystem::path& root)
+{
+    return std::make_shared<LooseFileProvider>(root);
 }
 
 } // namespace
 
-TEST_CASE("Read falls through to source when cooked is missing")
+TEST_CASE("CookedOrSourceProvider: cooked-only when source is null still functions for cooked content")
 {
-    const auto cookedDir = MakeTempDir("cooked-fallback");
-    const auto sourceDir = MakeTempDir("source-fallback");
-    WriteFile(sourceDir / "Materials" / "Foo.hmat", "source-payload");
-
-    auto cooked = std::make_shared<LooseFileProvider>(cookedDir);
-    auto source = std::make_shared<LooseFileProvider>(sourceDir);
-    CookedOrSourceProvider provider(cooked, source);
-
-    auto file = provider.Open("Materials/Foo.hmat", FileOpenMode::Read);
-    REQUIRE(file != nullptr);
-    CHECK(ReadAll(*file) == "source-payload");
-    CHECK(provider.Exists("Materials/Foo.hmat"));
-
-    RemoveAllSilent(cookedDir);
-    RemoveAllSilent(sourceDir);
+    TempRoots roots{"only_cooked"};
+    Touch(roots.cookedDir / "x.bin", "cooked");
+    CookedOrSourceProvider cos{Loose(roots.cookedDir), nullptr};
+    CHECK(cos.SupportsWrite());
+    CHECK(cos.Exists("x.bin"));
+    auto f = cos.Open("x.bin", FileOpenMode::Read);
+    REQUIRE(f);
+    char buf[6] = {};
+    f->Read(buf, 6);
+    CHECK(std::string(buf, 6) == "cooked");
 }
 
-TEST_CASE("Cooked shadows source when both exist (same logical name)")
+TEST_CASE("CookedOrSourceProvider: cooked-null source-only — SupportsWrite false; read-only fallback")
 {
-    const auto cookedDir = MakeTempDir("cooked-shadow");
-    const auto sourceDir = MakeTempDir("source-shadow");
-    WriteFile(cookedDir / "Shared.txt", "cooked-wins");
-    WriteFile(sourceDir / "Shared.txt", "source-loses");
+    TempRoots roots{"only_source"};
+    Touch(roots.sourceDir / "x.bin", "from-source");
+    CookedOrSourceProvider cos{nullptr, Loose(roots.sourceDir)};
+    CHECK_FALSE(cos.SupportsWrite());
+    CHECK(cos.Exists("x.bin"));
 
-    auto cooked = std::make_shared<LooseFileProvider>(cookedDir);
-    auto source = std::make_shared<LooseFileProvider>(sourceDir);
-    CookedOrSourceProvider provider(cooked, source);
+    auto f = cos.Open("x.bin", FileOpenMode::Read);
+    REQUIRE(f);
+    char buf[11] = {};
+    f->Read(buf, 11);
+    CHECK(std::string(buf, 11) == "from-source");
 
-    auto file = provider.Open("Shared.txt", FileOpenMode::Read);
-    REQUIRE(file != nullptr);
-    CHECK(ReadAll(*file) == "cooked-wins");
-
-    RemoveAllSilent(cookedDir);
-    RemoveAllSilent(sourceDir);
+    // Writes never go to source.
+    CHECK(cos.Open("y.bin", FileOpenMode::Write) == nullptr);
+    CHECK_FALSE(cos.CreateDirectories("z"));
+    CHECK_FALSE(cos.Remove("x.bin"));
 }
 
-TEST_CASE("Write goes only to the cooked root and does not fall through")
+TEST_CASE("CookedOrSourceProvider: Read prefers cooked; falls through to source on miss")
 {
-    const auto cookedDir = MakeTempDir("cooked-write");
-    const auto sourceDir = MakeTempDir("source-write");
+    TempRoots roots{"fallthrough"};
+    Touch(roots.cookedDir / "only_cooked.bin", "C");
+    Touch(roots.sourceDir / "only_source.bin", "S");
+    Touch(roots.cookedDir / "both.bin", "C");
+    Touch(roots.sourceDir / "both.bin", "S");
 
-    auto cooked = std::make_shared<LooseFileProvider>(cookedDir);
-    auto source = std::make_shared<LooseFileProvider>(sourceDir);
-    CookedOrSourceProvider provider(cooked, source);
+    CookedOrSourceProvider cos{Loose(roots.cookedDir), Loose(roots.sourceDir)};
 
-    {
-        auto writer = provider.Open("Output/Cube.hass", FileOpenMode::Write);
-        REQUIRE(writer != nullptr);
-        writer->Write("hass-bytes", 10);
-    }
+    auto a = cos.Open("only_cooked.bin", FileOpenMode::Read);
+    REQUIRE(a);
+    char ab[1] = {}; a->Read(ab, 1);
+    CHECK(ab[0] == 'C');
 
-    CHECK(std::filesystem::exists(cookedDir / "Output" / "Cube.hass"));
-    CHECK_FALSE(std::filesystem::exists(sourceDir / "Output" / "Cube.hass"));
+    auto b = cos.Open("only_source.bin", FileOpenMode::Read);
+    REQUIRE(b);
+    char bb[1] = {}; b->Read(bb, 1);
+    CHECK(bb[0] == 'S');
 
-    RemoveAllSilent(cookedDir);
-    RemoveAllSilent(sourceDir);
+    auto c = cos.Open("both.bin", FileOpenMode::Read);
+    REQUIRE(c);
+    char cb[1] = {}; c->Read(cb, 1);
+    CHECK(cb[0] == 'C');
 }
 
-TEST_CASE("Distinct extensions (cooked .hass and source .hmesh) coexist under one mount")
+TEST_CASE("CookedOrSourceProvider: Write/Append/ReadWrite never fall through")
 {
-    const auto cookedDir = MakeTempDir("cooked-distinct");
-    const auto sourceDir = MakeTempDir("source-distinct");
-    WriteFile(cookedDir / "Meshes" / "Cube.hass", "cooked-cube");
-    WriteFile(sourceDir / "Meshes" / "Cube.hmesh", R"({"type":"Mesh"})");
-
-    auto cooked = std::make_shared<LooseFileProvider>(cookedDir);
-    auto source = std::make_shared<LooseFileProvider>(sourceDir);
-    CookedOrSourceProvider provider(cooked, source);
-
-    auto cookedFile = provider.Open("Meshes/Cube.hass", FileOpenMode::Read);
-    REQUIRE(cookedFile != nullptr);
-    CHECK(ReadAll(*cookedFile) == "cooked-cube");
-
-    auto sourceFile = provider.Open("Meshes/Cube.hmesh", FileOpenMode::Read);
-    REQUIRE(sourceFile != nullptr);
-    CHECK(ReadAll(*sourceFile) == R"({"type":"Mesh"})");
-
-    RemoveAllSilent(cookedDir);
-    RemoveAllSilent(sourceDir);
+    TempRoots roots{"no_fallthrough"};
+    CookedOrSourceProvider cos{Loose(roots.cookedDir), Loose(roots.sourceDir)};
+    // The file does not exist in either root. Write goes to cooked (cooked supports writes).
+    auto f = cos.Open("new.bin", FileOpenMode::Write);
+    REQUIRE(f);
+    f->Write("z", 1);
+    f.reset();
+    CHECK(std::filesystem::exists(roots.cookedDir / "new.bin"));
+    CHECK_FALSE(std::filesystem::exists(roots.sourceDir / "new.bin"));
 }
 
-TEST_CASE("Null source provider degrades to cooked-only (shipped build mode)")
+TEST_CASE("CookedOrSourceProvider: Exists is OR of both providers; Stat prefers cooked")
 {
-    const auto cookedDir = MakeTempDir("cooked-only");
-    WriteFile(cookedDir / "Foo.hass", "shipped");
+    TempRoots roots{"exists"};
+    Touch(roots.sourceDir / "src.bin", "source-only");
+    Touch(roots.cookedDir / "ck.bin", "cooked");
+    Touch(roots.sourceDir / "ck.bin", "source-shadowed");
 
-    auto cooked = std::make_shared<LooseFileProvider>(cookedDir);
-    CookedOrSourceProvider provider(cooked, nullptr);
+    CookedOrSourceProvider cos{Loose(roots.cookedDir), Loose(roots.sourceDir)};
+    CHECK(cos.Exists("src.bin"));
+    CHECK(cos.Exists("ck.bin"));
+    CHECK_FALSE(cos.Exists("missing.bin"));
 
-    auto file = provider.Open("Foo.hass", FileOpenMode::Read);
-    REQUIRE(file != nullptr);
-    CHECK(ReadAll(*file) == "shipped");
-    CHECK_FALSE(provider.Open("missing.hass", FileOpenMode::Read));
-
-    RemoveAllSilent(cookedDir);
+    CHECK(cos.Stat("ck.bin").size == 6u);  // "cooked" wins
+    CHECK(cos.Stat("src.bin").size == 11u);
+    CHECK_FALSE(cos.Stat("missing.bin").exists);
 }
 
-TEST_CASE("Stat falls through to source when cooked is absent")
+TEST_CASE("CookedOrSourceProvider::EnumerateFiles: cooked first; source dedups by sub-path")
 {
-    const auto cookedDir = MakeTempDir("cooked-stat");
-    const auto sourceDir = MakeTempDir("source-stat");
-    WriteFile(sourceDir / "data.bin", "1234567890");
+    TempRoots roots{"enum"};
+    Touch(roots.cookedDir / "a.bin", "C");
+    Touch(roots.cookedDir / "sub" / "b.bin", "C");
+    Touch(roots.sourceDir / "a.bin", "S");          // shadowed
+    Touch(roots.sourceDir / "sub" / "c.bin", "S");  // unique
 
-    auto cooked = std::make_shared<LooseFileProvider>(cookedDir);
-    auto source = std::make_shared<LooseFileProvider>(sourceDir);
-    CookedOrSourceProvider provider(cooked, source);
+    CookedOrSourceProvider cos{Loose(roots.cookedDir), Loose(roots.sourceDir)};
+    std::set<std::string> seen;
+    cos.EnumerateFiles("", true, [&](std::string_view p, const FileStat&) { seen.emplace(p); });
 
-    const auto s = provider.Stat("data.bin");
-    CHECK(s.exists);
-    CHECK(s.size == 10);
+    CHECK(seen.count("a.bin") == 1);
+    CHECK(seen.count("sub/b.bin") == 1);
+    CHECK(seen.count("sub/c.bin") == 1);
 
-    RemoveAllSilent(cookedDir);
-    RemoveAllSilent(sourceDir);
+    // Null visitor is a no-op.
+    cos.EnumerateFiles("", true, {});
 }
+
+TEST_CASE("CookedOrSourceProvider::DebugName lists both child providers")
+{
+    TempRoots roots{"name"};
+    CookedOrSourceProvider cos{Loose(roots.cookedDir), Loose(roots.sourceDir)};
+    std::string name{cos.DebugName()};
+    CHECK(name.find("CookedOrSource(") != std::string::npos);
+    CHECK(name.find("cooked=") != std::string::npos);
+    CHECK(name.find("source=") != std::string::npos);
+
+    CookedOrSourceProvider missing{nullptr, nullptr};
+    const std::string missingName{missing.DebugName()};
+    CHECK(missingName.find("<null>") != std::string::npos);
+}
+
+TEST_CASE("CookedOrSourceProvider: Cooked() / Source() accessors return raw pointers")
+{
+    TempRoots roots{"accessors"};
+    auto cookedShared = Loose(roots.cookedDir);
+    CookedOrSourceProvider cos{cookedShared, nullptr};
+    CHECK(cos.Cooked() == cookedShared.get());
+    CHECK(cos.Source() == nullptr);
+}
+
+TEST_SUITE_END();

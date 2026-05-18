@@ -4,6 +4,7 @@
 
 #include "Engine/EngineLoop.h"
 
+#include "Core/Concurrency/ThreadAffinity.h"
 #include "Core/Logging/CoreLogCategories.h"
 #include "Core/Logging/Logger.h"
 #include "Engine/Engine.h"
@@ -79,6 +80,8 @@ void EngineLoop::DrainCommands()
 
 void EngineLoop::ThreadEntry()
 {
+    Concurrency::RegisterCurrentThreadRole(Concurrency::ThreadRole::GameThread);
+
     bool initOk = false;
     try
     {

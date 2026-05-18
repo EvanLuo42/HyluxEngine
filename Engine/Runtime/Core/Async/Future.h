@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "Core/Async/IExecutor.h"
 #include "Core/Memory/MakeRef.h"
 #include "Core/Memory/Ref.h"
 #include "Core/Memory/RefCounted.h"
@@ -144,12 +145,56 @@ public:
     ///        other Future sharing the same state).
     T& Wait() { return state_->Wait(); }
 
-    /// @brief Registers a continuation. If the future is already ready, the callback runs
-    ///        synchronously on the calling thread before this returns; otherwise it runs
-    ///        from the thread that eventually calls Promise::Set.
+    /// @brief Registers a continuation that runs inline (no marshaling). If the future
+    ///        is already ready, the callback runs synchronously on the calling thread
+    ///        before this returns; otherwise it runs from the thread that eventually
+    ///        calls Promise::Set. Equivalent to Then(InlineExecutor::Instance(), cb).
     void Then(std::function<void(T&)> callback)
     {
         state_->AddContinuation(std::move(callback));
+    }
+
+    /// @brief Registers a continuation that runs through @p executor. If the future is
+    ///        already ready, the callback is posted to @p executor before this method
+    ///        returns (still synchronous w.r.t. enqueue; the actual run depends on the
+    ///        executor's policy). If not ready, the callback is posted from whichever
+    ///        thread calls Promise::Set — so this overload is the canonical way to keep
+    ///        a continuation off the producer's thread.
+    void Then(IExecutor& executor, std::function<void(T&)> callback)
+    {
+        if (&executor == &InlineExecutor::Instance())
+        {
+            state_->AddContinuation(std::move(callback));
+            return;
+        }
+        IExecutor*                  exec  = &executor;
+        Ref<Detail::FutureState<T>> keep  = state_;
+        state_->AddContinuation([exec, keep, callback = std::move(callback)](T& /*value*/) mutable {
+            exec->Post([keep, callback = std::move(callback)]() mutable { callback(keep->Wait()); });
+        });
+    }
+
+    /// @brief Chains a synchronous value transform. Returns a Future<U> that resolves
+    ///        once this future does, holding the result of @p transform applied to the
+    ///        resolved value. Inline by default; use the executor overload to marshal
+    ///        the transform onto a specific thread.
+    template<typename U>
+    [[nodiscard]] Future<U> Transform(std::function<U(T&)> transform)
+    {
+        Promise<U> p;
+        Future<U>  out = p.GetFuture();
+        Then([p, transform = std::move(transform)](T& value) mutable { p.Set(transform(value)); });
+        return out;
+    }
+
+    /// @brief Executor-aware Transform. The transform runs on @p executor.
+    template<typename U>
+    [[nodiscard]] Future<U> Transform(IExecutor& executor, std::function<U(T&)> transform)
+    {
+        Promise<U> p;
+        Future<U>  out = p.GetFuture();
+        Then(executor, [p, transform = std::move(transform)](T& value) mutable { p.Set(transform(value)); });
+        return out;
     }
 
 private:

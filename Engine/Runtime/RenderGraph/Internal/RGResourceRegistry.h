@@ -13,6 +13,7 @@
 #include "RenderGraph/Internal/RGNode.h"
 
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -72,6 +73,7 @@ private:
     RHI::IRHIDevice*                                                                 device_{nullptr};
     std::vector<RGTextureNode>*                                                      textures_{nullptr};
     std::vector<RGBufferNode>*                                                       buffers_{nullptr};
+    mutable std::mutex                                                               viewCacheMutex_;
     std::unordered_map<ViewKey, Ref<RHI::IRHITextureView>, ViewKeyHash, ViewKeyEq>   viewCache_;
 };
 

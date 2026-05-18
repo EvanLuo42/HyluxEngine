@@ -32,6 +32,12 @@ constexpr RGTextureAccess kResolveAttachmentAccess{
     RHI::AccessMask::ColorAttachmentWrite,
 };
 
+constexpr RGTextureAccess kInputAttachmentAccess{
+    RHI::ImageLayout::ShaderReadOnly,
+    RHI::PipelineStageMask::PixelShader,
+    RHI::AccessMask::InputAttachmentRead,
+};
+
 } // namespace
 
 RGTextureHandle RGRasterBuilder::SetColorAttachment(std::uint32_t   slot,
@@ -70,6 +76,12 @@ RGTextureHandle RGRasterBuilder::SetDepthAttachment(RGTextureHandle handle,
 void RGRasterBuilder::SetRenderArea(RHI::Rect2D area)
 {
     graph_->RecordRenderArea(passIndex_, area);
+}
+
+void RGRasterBuilder::ReadInputAttachment(RGTextureHandle handle)
+{
+    assert(handle.IsValid() && "ReadInputAttachment: invalid handle");
+    graph_->RecordTextureRead(passIndex_, handle, kInputAttachmentAccess);
 }
 
 } // namespace Hylux::RG

@@ -67,21 +67,26 @@ RHI::IRHITextureView* RGResourceRegistry::GetTextureView(std::uint32_t textureIn
         PackViewFlags(desc),
     };
 
-    if (auto it = viewCache_.find(key); it != viewCache_.end())
     {
-        return it->second.Get();
+        std::lock_guard lock(viewCacheMutex_);
+        if (auto it = viewCache_.find(key); it != viewCache_.end())
+        {
+            return it->second.Get();
+        }
     }
 
     RHI::IRHITexture* texture = (*textures_)[textureIndex].realized.Get();
     assert(texture != nullptr && "GetTextureView called before texture was realized");
     Ref<RHI::IRHITextureView> view = device_->CreateTextureView(texture, desc);
-    RHI::IRHITextureView*     raw  = view.Get();
-    viewCache_.emplace(key, std::move(view));
-    return raw;
+
+    std::lock_guard lock(viewCacheMutex_);
+    auto [it, inserted] = viewCache_.emplace(key, std::move(view));
+    return it->second.Get();
 }
 
 void RGResourceRegistry::Reset() noexcept
 {
+    std::lock_guard lock(viewCacheMutex_);
     viewCache_.clear();
 }
 

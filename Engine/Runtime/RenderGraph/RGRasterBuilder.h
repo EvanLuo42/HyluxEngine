@@ -47,6 +47,17 @@ public:
     ///        of the first color attachment if not specified.
     void SetRenderArea(RHI::Rect2D area);
 
+    /// @brief Declares that this raster pass reads `handle` as an input attachment — i.e. it
+    ///        samples (at the same fragment coordinate) data the previous pass wrote into a
+    ///        color or depth attachment. Recorded as a ReadTexture with
+    ///        AccessMask::InputAttachmentRead at the pixel-shader stage. This is the
+    ///        precondition the future subpass-merger looks for when deciding whether two
+    ///        consecutive raster passes can share one render-pass instance and keep the
+    ///        attachment in tile memory. The current executor inserts a normal sampled-read
+    ///        barrier; once the merger lands, it will rewrite the layout to a tile-local
+    ///        read and elide the store/load round-trip.
+    void ReadInputAttachment(RGTextureHandle handle);
+
 private:
     friend class RenderGraph;
     RGRasterBuilder(RenderGraph* graph, std::uint32_t passIndex) noexcept

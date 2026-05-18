@@ -1,5 +1,6 @@
 #include "Renderer/Subsystem/RenderSubsystem.h"
 
+#include "Core/Concurrency/ThreadAffinity.h"
 #include "Core/Logging/CoreLogCategories.h"
 #include "Core/Logging/Logger.h"
 #include "Engine/Engine.h"
@@ -231,6 +232,7 @@ IRenderPath* RenderSubsystem::RegisterRenderPath(std::unique_ptr<IRenderPath> pa
 
 ProxyId RenderSubsystem::SpawnPrimitive(const PrimitiveSpawnDesc& desc) const
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (transformBuffer_ == nullptr || cmdQueue_ == nullptr)
     {
         return ProxyId::Invalid;
@@ -271,6 +273,7 @@ void RenderSubsystem::UpdateTransform(const ProxyId id, const TransformMat3x4& m
 
 void RenderSubsystem::DespawnPrimitive(const ProxyId id) const
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (cmdQueue_)
     {
         cmdQueue_->Enqueue(DespawnPrimitiveCmd{id});
@@ -279,6 +282,7 @@ void RenderSubsystem::DespawnPrimitive(const ProxyId id) const
 
 void RenderSubsystem::AssignMaterial(const ProxyId id, const MaterialInstance& instance) const
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (cmdQueue_ == nullptr)
     {
         return;
@@ -291,6 +295,7 @@ void RenderSubsystem::AssignMaterial(const ProxyId id, const MaterialInstance& i
 
 void RenderSubsystem::AssignMesh(const ProxyId id, const std::uint64_t meshHandle) const
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (cmdQueue_)
     {
         cmdQueue_->Enqueue(AssignMeshCmd{id, meshHandle});
@@ -299,6 +304,7 @@ void RenderSubsystem::AssignMesh(const ProxyId id, const std::uint64_t meshHandl
 
 void RenderSubsystem::SetPrimitiveFlags(const ProxyId id, const std::uint32_t flags) const
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (cmdQueue_)
     {
         cmdQueue_->Enqueue(SetFlagsCmd{id, flags});
@@ -307,6 +313,7 @@ void RenderSubsystem::SetPrimitiveFlags(const ProxyId id, const std::uint32_t fl
 
 void RenderSubsystem::SetPrimitiveBounds(const ProxyId id, const PrimitiveBounds& bounds) const
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (cmdQueue_ == nullptr)
     {
         return;
@@ -324,6 +331,7 @@ void RenderSubsystem::SetPrimitiveBounds(const ProxyId id, const PrimitiveBounds
 
 void RenderSubsystem::SubmitFrame(std::span<const SceneViewRequest> views)
 {
+    HYLUX_ASSERT_GAME_THREAD();
     if (!initialized_)
     {
         HYLUX_LOG_WARN(LogRender, "RenderSubsystem::SubmitFrame called before Initialize");

@@ -52,7 +52,7 @@ private:
     void ContinueBootstrap();
     void OnEngineInitialized(bool ok);
     void ShutdownLoopAndEngine();
-    void RegisterBuiltinMenus();
+    void RegisterBuiltinMenus() const;
     void RegisterEditorSubsystems();
 
     std::unique_ptr<QGuiApplication> guiApp_;

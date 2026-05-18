@@ -1,13 +1,17 @@
 /// @file
-/// @brief Builds a runtime TextureAsset from a cooked .hass payload. Creates a single
-///        2D texture with the declared mip chain and stages per-mip pixel bytes through
-///        ctx.uploader. When ctx.uploader is null the texture is created but no pixels
-///        are uploaded — used in unit tests that exercise the parse path only.
+/// @brief Builds a runtime TextureAsset from a cooked .hass payload. Returns a Future
+///        that resolves to the constructed asset once the GPU upload completes (or to a
+///        null Ref on parse / create / upload failure). Synchronous up to the upload
+///        submit: the texture is created and staging is populated on the calling
+///        thread, then the upload is enqueued on the AssetUploader's worker. When
+///        ctx.uploader is null the texture is created but no pixels are uploaded — used
+///        in unit tests that exercise the parse path only.
 
 #pragma once
 
 #include "Asset/AssetLoaderContext.h"
 #include "Asset/Types/TextureAsset.h"
+#include "Core/Async/Future.h"
 #include "Core/Memory/Ref.h"
 
 namespace Hylux::Asset::Cooked
@@ -21,8 +25,8 @@ namespace Hylux::Asset
 class TextureLoader
 {
 public:
-    [[nodiscard]] static Ref<TextureAsset> Load(const Cooked::CookedReader& reader,
-                                                 const AssetLoaderContext&    ctx);
+    [[nodiscard]] static Future<Ref<TextureAsset>> Load(const Cooked::CookedReader& reader,
+                                                        const AssetLoaderContext&    ctx);
 };
 
 } // namespace Hylux::Asset

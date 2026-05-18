@@ -5,6 +5,7 @@
 
 #include "RenderGraph/RenderGraph.h"
 
+#include "Core/Async/TaskGraph.h"
 #include "Core/Memory/FrameAllocator.h"
 #include "RHI/IRHIBuffer.h"
 #include "RHI/IRHICommandList.h"
@@ -20,6 +21,7 @@
 #include <memory_resource>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace Hylux::RG
 {
@@ -35,26 +37,32 @@ constexpr std::uint32_t kInvalidPassIndex = 0xFFFFFFFFu;
     using RHI::TextureUsage;
     using RHI::AccessMask;
 
+    TextureUsage extra = TextureUsage::None;
+    if ((access.access & AccessMask::InputAttachmentRead) != AccessMask::None)
+    {
+        extra |= TextureUsage::InputAttachment;
+    }
+
     switch (access.layout)
     {
         case ImageLayout::ColorAttachment:
-            return TextureUsage::ColorAttachment;
+            return TextureUsage::ColorAttachment | extra;
         case ImageLayout::DepthStencilAttachment:
         case ImageLayout::DepthStencilReadOnly:
-            return TextureUsage::DepthStencilAttachment;
+            return TextureUsage::DepthStencilAttachment | extra;
         case ImageLayout::ShaderReadOnly:
-            return TextureUsage::SampledImage;
+            return TextureUsage::SampledImage | extra;
         case ImageLayout::TransferSrc:
-            return TextureUsage::TransferSrc;
+            return TextureUsage::TransferSrc | extra;
         case ImageLayout::TransferDst:
-            return TextureUsage::TransferDst;
+            return TextureUsage::TransferDst | extra;
         case ImageLayout::General:
-            return ((access.access & AccessMask::ShaderResourceWrite) != AccessMask::None
-                    || (access.access & AccessMask::ShaderResourceRead) != AccessMask::None)
+            return (((access.access & AccessMask::ShaderResourceWrite) != AccessMask::None
+                     || (access.access & AccessMask::ShaderResourceRead) != AccessMask::None)
                 ? TextureUsage::StorageImage
-                : TextureUsage::SampledImage;
+                : TextureUsage::SampledImage) | extra;
         default:
-            return TextureUsage::None;
+            return extra;
     }
 }
 
@@ -558,6 +566,22 @@ void RenderGraph::PlanBarriers()
     }
 }
 
+void RenderGraph::ComputeMergeHints()
+{
+    for (std::size_t i = 1; i < executionOrder_.size(); ++i)
+    {
+        Internal::RGPassNode& curr = passes_[executionOrder_[i]];
+        Internal::RGPassNode& prev = passes_[executionOrder_[i - 1]];
+        if (!curr.isRaster || !prev.isRaster)
+        {
+            continue;
+        }
+        auto* currRaster = static_cast<RGRasterPass*>(curr.pass);
+        auto* prevRaster = static_cast<RGRasterPass*>(prev.pass);
+        curr.mergeWithPrevious = currRaster->CanMergeWith(*prevRaster);
+    }
+}
+
 void RenderGraph::Compile()
 {
     assert(!compiled_ && "Compile called twice");
@@ -565,7 +589,85 @@ void RenderGraph::Compile()
     TopologicallySortPasses();
     RealizeResources();
     PlanBarriers();
+    ComputeMergeHints();
+    ComputeRenderPassBatches();
     compiled_ = true;
+}
+
+std::span<const Internal::RGRenderPassBatch> RenderGraph::RenderPassBatches() const noexcept
+{
+    return renderPassBatches_;
+}
+
+void RenderGraph::ComputeRenderPassBatches()
+{
+    renderPassBatches_.clear();
+    if (executionOrder_.empty())
+    {
+        return;
+    }
+
+    auto deriveAttachments = [this](std::uint32_t passIdx) -> RHI::RHIRenderPassAttachments {
+        const Internal::RGPassNode&   node = passes_[passIdx];
+        RHI::RHIRenderPassAttachments att{};
+        if (!node.isRaster)
+        {
+            return att;
+        }
+        std::uint32_t maxSlot     = 0;
+        bool          hasAnyColor = false;
+        std::uint32_t sampleCount = 1;
+        for (const auto& ca : node.colorAttachments)
+        {
+            if (ca.slot >= RHI::kMaxColorAttachments)
+            {
+                continue;
+            }
+            const Internal::RGTextureNode& tex = textures_[ca.textureIndex];
+            att.colorFormats[ca.slot] = tex.desc.format;
+            if (!hasAnyColor || ca.slot > maxSlot)
+            {
+                maxSlot = ca.slot;
+            }
+            hasAnyColor = true;
+            if (tex.desc.sampleCount > sampleCount)
+            {
+                sampleCount = tex.desc.sampleCount;
+            }
+        }
+        att.colorAttachmentCount = hasAnyColor ? (maxSlot + 1) : 0;
+        if (node.depthAttachment.present)
+        {
+            const Internal::RGTextureNode& tex = textures_[node.depthAttachment.textureIndex];
+            att.depthFormat = tex.desc.format;
+            if (tex.desc.sampleCount > sampleCount)
+            {
+                sampleCount = tex.desc.sampleCount;
+            }
+        }
+        att.sampleCount = sampleCount;
+        return att;
+    };
+
+    for (std::uint32_t i = 0; i < executionOrder_.size(); ++i)
+    {
+        const std::uint32_t          passIdx = executionOrder_[i];
+        const Internal::RGPassNode&  node    = passes_[passIdx];
+
+        const bool canExtend = !renderPassBatches_.empty() && node.isRaster && node.mergeWithPrevious;
+        if (canExtend)
+        {
+            ++renderPassBatches_.back().count;
+        }
+        else
+        {
+            Internal::RGRenderPassBatch batch{};
+            batch.firstExecIndex = i;
+            batch.count          = 1;
+            batch.attachments    = deriveAttachments(passIdx);
+            renderPassBatches_.push_back(batch);
+        }
+    }
 }
 
 void RenderGraph::RecordPass(RHI::IRHICommandList& cmd, std::uint32_t compiledIndex)
@@ -672,6 +774,11 @@ void RenderGraph::Execute(RHI::IRHICommandList& cmd)
         RecordPass(cmd, i);
     }
 
+    RecordFinalLayoutTransitions(cmd);
+}
+
+void RenderGraph::RecordFinalLayoutTransitions(RHI::IRHICommandList& cmd)
+{
     std::vector<RHI::TextureBarrier> finalTextureBarriers;
     for (std::uint32_t texIdx = 0; texIdx < textures_.size(); ++texIdx)
     {
@@ -703,6 +810,66 @@ void RenderGraph::Execute(RHI::IRHICommandList& cmd)
         group.textures = std::span<const RHI::TextureBarrier>(finalTextureBarriers);
         cmd.Barrier(group);
     }
+}
+
+void RenderGraph::ExecuteParallel(const ParallelExecuteParams&             params,
+                                  std::vector<Ref<RHI::IRHICommandList>>& outOrderedCmdLists)
+{
+    assert(compiled_ && "ExecuteParallel called before Compile");
+    assert(params.acquireCmdList && "ParallelExecuteParams::acquireCmdList must be set");
+
+    auto recordSerialBatch = [this, &params, &outOrderedCmdLists](const Internal::RGRenderPassBatch& batch) {
+        Ref<RHI::IRHICommandList> cmd = params.acquireCmdList(-1);
+        assert(cmd && "acquireCmdList returned null");
+        cmd->Begin();
+        for (std::uint32_t k = 0; k < batch.count; ++k)
+        {
+            RecordPass(*cmd, batch.firstExecIndex + k);
+        }
+        cmd->End();
+        outOrderedCmdLists.push_back(std::move(cmd));
+    };
+
+    for (const Internal::RGRenderPassBatch& batch : renderPassBatches_)
+    {
+        const bool canParallelize = params.workerExec != nullptr && batch.count > 1;
+        if (!canParallelize)
+        {
+            recordSerialBatch(batch);
+            continue;
+        }
+
+        const std::uint32_t                    n = batch.count;
+        std::vector<Ref<RHI::IRHICommandList>> batchCmds(n);
+
+        TaskGraph g;
+        for (std::uint32_t k = 0; k < n; ++k)
+        {
+            const std::uint32_t passCompiledIndex = batch.firstExecIndex + k;
+            g.AddNodeOn(params.workerExec, "rg-pass", {},
+                        [this, &params, &batchCmds, passCompiledIndex, k](TaskContext& ctx) {
+                            Ref<RHI::IRHICommandList> cmd = params.acquireCmdList(ctx.WorkerIndex());
+                            assert(cmd && "acquireCmdList returned null on worker");
+                            cmd->Begin();
+                            RecordPass(*cmd, passCompiledIndex);
+                            cmd->End();
+                            batchCmds[k] = std::move(cmd);
+                        });
+        }
+        g.Submit(*params.workerExec).Wait();
+
+        for (auto& cmd : batchCmds)
+        {
+            outOrderedCmdLists.push_back(std::move(cmd));
+        }
+    }
+
+    Ref<RHI::IRHICommandList> finalCmd = params.acquireCmdList(-1);
+    assert(finalCmd && "acquireCmdList returned null for final-layout-transition CL");
+    finalCmd->Begin();
+    RecordFinalLayoutTransitions(*finalCmd);
+    finalCmd->End();
+    outOrderedCmdLists.push_back(std::move(finalCmd));
 }
 
 } // namespace Hylux::RG

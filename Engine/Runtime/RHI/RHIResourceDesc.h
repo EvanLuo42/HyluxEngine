@@ -21,7 +21,10 @@ enum class BindlessIndex : std::uint32_t
 };
 
 /// @brief Description used to create an IRHIBuffer. Bindless flags request the device to
-///        allocate the appropriate descriptor in the SrvCbvUav heap on creation.
+///        allocate the appropriate descriptor in the SrvCbvUav heap on creation. `sparse`
+///        requests a sparse / tiled buffer whose backing pages are bound on demand by the
+///        owner (e.g. a streamed virtual-mesh cluster pool); the backend creates the
+///        resource with no resident memory until the application binds pages explicitly.
 struct BufferDesc
 {
     std::uint64_t size{0};
@@ -32,9 +35,13 @@ struct BufferDesc
     bool          bindlessUav{false};
     bool          bindlessCbv{false};
     bool          aliasable{false};
+    bool          sparse{false};
 };
 
-/// @brief Description used to create an IRHITexture.
+/// @brief Description used to create an IRHITexture. `sparse` requests a sparse / tiled
+///        image whose backing tiles are bound on demand by the owner (e.g. a virtual
+///        texture's tile pool); the backend creates the resource with no resident tiles
+///        until the application binds them through the uploader's tile path.
 struct TextureDesc
 {
     TextureDimension dimension{TextureDimension::Tex2D};
@@ -47,6 +54,7 @@ struct TextureDesc
     MemoryUsage     memory{MemoryUsage::GpuOnly};
     ClearValue       optimalClear{};
     bool             aliasable{false};
+    bool             sparse{false};
 };
 
 /// @brief Description used to create an IRHITextureView. A default view describes the entire

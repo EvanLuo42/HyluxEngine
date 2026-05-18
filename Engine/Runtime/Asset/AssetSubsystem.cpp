@@ -1,8 +1,11 @@
 /// @file
 /// @brief AssetSubsystem implementation + the private AssetUploader that stages CPU
-///        bytes into GPU buffers and textures via a dedicated graphics-queue command
-///        pool and a one-shot fence. v1 blocks on the fence; v2 will route this through
-///        a transfer queue + worker thread without changing IAssetUploader.
+///        bytes into GPU buffers and textures. The uploader owns a dedicated worker
+///        thread + command pool: caller threads allocate the staging buffer and memcpy
+///        the source bytes (so the source can be released immediately), then enqueue a
+///        record-lambda; the worker drains the queue, records into its cmd buffer,
+///        submits on the graphics queue with a fence signal, waits the fence, and sets
+///        the Promise. Cancellation tokens are polled before the worker starts a job.
 
 #include "Asset/AssetSubsystem.h"
 
@@ -12,6 +15,7 @@
 #include "Asset/Loaders/MaterialLoader.h"
 #include "Asset/Loaders/MeshLoader.h"
 #include "Asset/Loaders/TextureLoader.h"
+#include "Core/Async/Future.h"
 #include "Core/IO/Virtual/VirtualFileSystem.h"
 #include "Core/Logging/CoreLogCategories.h"
 #include "Core/Logging/Logger.h"
@@ -30,8 +34,14 @@
 #include "Shader/ShaderSubsystem.h"
 
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <functional>
+#include <mutex>
 #include <span>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -45,40 +55,92 @@ class AssetUploader final : public IAssetUploader
 {
 public:
     AssetUploader(RHI::IRHIDevice* device, Ref<RHI::IRHIQueue> queue, Ref<RHI::IRHICommandPool> pool,
-                  Ref<RHI::IRHIFence> fence) noexcept
+                  Ref<RHI::IRHIFence> fence)
         : device_(device), queue_(std::move(queue)), pool_(std::move(pool)), fence_(std::move(fence))
-    {}
-
-    bool UploadBufferData(RHI::IRHIBuffer& destination, const void* bytes, std::uint64_t size) override
     {
-        if (size == 0 || bytes == nullptr)
-        {
-            return true;
-        }
-        Ref<RHI::IRHIBuffer> staging = AllocateStaging(size);
-        if (!staging)
-        {
-            return false;
-        }
-        if (!WriteToMapped(*staging, bytes, size))
-        {
-            return false;
-        }
-
-        Ref<RHI::IRHICommandList> cmd;
-        if (!BeginOneShot(cmd))
-        {
-            return false;
-        }
-        cmd->CopyBuffer(&destination, 0, staging.Get(), 0, size);
-        return EndAndWait(*cmd);
+        worker_ = std::thread([this] { WorkerLoop(); });
     }
 
-    bool UploadTextureMips(RHI::IRHITexture& destination, std::span<const MipUpload> mips) override
+    ~AssetUploader() override
     {
+        {
+            std::lock_guard lock(jobsMutex_);
+            stop_.store(true, std::memory_order_release);
+        }
+        jobsCv_.notify_all();
+        if (worker_.joinable())
+        {
+            worker_.join();
+        }
+        DrainPendingAsFailed();
+    }
+
+    AssetUploader(const AssetUploader&)            = delete;
+    AssetUploader& operator=(const AssetUploader&) = delete;
+
+    Future<bool> UploadBufferData(RHI::IRHIBuffer&  destination,
+                                  const void*       bytes,
+                                  std::uint64_t     size,
+                                  CancellationToken token) override
+    {
+        Promise<bool> promise;
+        Future<bool>  future = promise.GetFuture();
+        if (size == 0 || bytes == nullptr)
+        {
+            promise.Set(true);
+            return future;
+        }
+
+        Ref<RHI::IRHIBuffer> staging = AllocateStaging(size);
+        if (!staging || !WriteToMapped(*staging, bytes, size))
+        {
+            promise.Set(false);
+            return future;
+        }
+
+        Ref<RHI::IRHIBuffer> dstKeep(&destination);
+        RHI::IRHIBuffer*     dst  = &destination;
+        RHI::IRHIBuffer*     src  = staging.Get();
+
+        UploadJob job;
+        job.promise = std::move(promise);
+        job.token   = std::move(token);
+        job.bufferRefs.push_back(std::move(staging));
+        job.bufferRefs.push_back(std::move(dstKeep));
+        job.record = [dst, src, size](RHI::IRHICommandList& cmd) {
+            cmd.CopyBuffer(dst, 0, src, 0, size);
+        };
+        Enqueue(std::move(job));
+        return future;
+    }
+
+    Future<bool> UploadBufferRange(RHI::IRHIBuffer& /*destination*/, std::uint64_t /*dstOffset*/,
+                                   const void* /*bytes*/, std::uint64_t /*size*/,
+                                   CancellationToken /*token*/) override
+    {
+        HYLUX_LOG_WARN(LogAsset, "AssetUploader: UploadBufferRange not supported in v1");
+        return Future<bool>::MakeReady(false);
+    }
+
+    Future<bool> UploadTextureTiles(RHI::IRHITexture& /*destination*/,
+                                    std::span<const TileUpload> /*tiles*/,
+                                    CancellationToken /*token*/) override
+    {
+        HYLUX_LOG_WARN(LogAsset, "AssetUploader: UploadTextureTiles not supported in v1 "
+                                 "(VirtualTextureAsset backend not yet implemented)");
+        return Future<bool>::MakeReady(false);
+    }
+
+    Future<bool> UploadTextureMips(RHI::IRHITexture&          destination,
+                                   std::span<const MipUpload>  mips,
+                                   CancellationToken          token) override
+    {
+        Promise<bool> promise;
+        Future<bool>  future = promise.GetFuture();
         if (mips.empty())
         {
-            return true;
+            promise.Set(true);
+            return future;
         }
 
         std::uint64_t totalBytes = 0;
@@ -88,19 +150,22 @@ public:
         }
         if (totalBytes == 0)
         {
-            return true;
+            promise.Set(true);
+            return future;
         }
 
         Ref<RHI::IRHIBuffer> staging = AllocateStaging(totalBytes);
         if (!staging)
         {
-            return false;
+            promise.Set(false);
+            return future;
         }
-
         void* mapped = staging->Map(0, totalBytes);
         if (mapped == nullptr)
         {
-            return false;
+            HYLUX_LOG_ERROR(LogAsset, "AssetUploader: staging map failed");
+            promise.Set(false);
+            return future;
         }
         std::vector<std::uint64_t> mipOffsets;
         mipOffsets.reserve(mips.size());
@@ -113,76 +178,183 @@ public:
         }
         staging->Unmap();
 
-        std::uint32_t maxMipLevel    = 0;
-        std::uint32_t maxArrayLayer  = 0;
-        for (const auto& m : mips)
+        std::vector<MipUpload> mipsCopy(mips.begin(), mips.end());
+        for (auto& m : mipsCopy)
+        {
+            m.bytes = {};
+        }
+
+        std::uint32_t maxMipLevel   = 0;
+        std::uint32_t maxArrayLayer = 0;
+        for (const auto& m : mipsCopy)
         {
             if (m.mipLevel > maxMipLevel)       maxMipLevel = m.mipLevel;
             if (m.arrayLayer > maxArrayLayer)   maxArrayLayer = m.arrayLayer;
         }
 
-        Ref<RHI::IRHICommandList> cmd;
-        if (!BeginOneShot(cmd))
-        {
-            return false;
-        }
+        Ref<RHI::IRHITexture> dstKeep(&destination);
+        RHI::IRHITexture*     dst = &destination;
+        RHI::IRHIBuffer*      src = staging.Get();
 
-        RHI::TextureBarrier toTransfer{};
-        toTransfer.texture                  = &destination;
-        toTransfer.range.baseMipLevel       = 0;
-        toTransfer.range.mipLevelCount      = maxMipLevel + 1;
-        toTransfer.range.baseArrayLayer     = 0;
-        toTransfer.range.arrayLayerCount    = maxArrayLayer + 1;
-        toTransfer.oldLayout                = RHI::ImageLayout::Undefined;
-        toTransfer.newLayout                = RHI::ImageLayout::TransferDst;
-        toTransfer.srcStages                = RHI::PipelineStageMask::TopOfPipe;
-        toTransfer.srcAccess                = RHI::AccessMask::None;
-        toTransfer.dstStages                = RHI::PipelineStageMask::Transfer;
-        toTransfer.dstAccess                = RHI::AccessMask::TransferWrite;
-        std::array              toTransferArr{toTransfer};
-        RHI::BarrierGroup       prep{};
-        prep.textures = std::span<const RHI::TextureBarrier>{toTransferArr};
-        cmd->Barrier(prep);
+        UploadJob job;
+        job.promise = std::move(promise);
+        job.token   = std::move(token);
+        job.bufferRefs.push_back(std::move(staging));
+        job.textureRefs.push_back(std::move(dstKeep));
+        job.record = [dst, src, mipsCopy = std::move(mipsCopy), mipOffsets = std::move(mipOffsets),
+                      maxMipLevel, maxArrayLayer](RHI::IRHICommandList& cmd) {
+            RHI::TextureBarrier toTransfer{};
+            toTransfer.texture               = dst;
+            toTransfer.range.baseMipLevel    = 0;
+            toTransfer.range.mipLevelCount   = maxMipLevel + 1;
+            toTransfer.range.baseArrayLayer  = 0;
+            toTransfer.range.arrayLayerCount = maxArrayLayer + 1;
+            toTransfer.oldLayout             = RHI::ImageLayout::Undefined;
+            toTransfer.newLayout             = RHI::ImageLayout::TransferDst;
+            toTransfer.srcStages             = RHI::PipelineStageMask::TopOfPipe;
+            toTransfer.srcAccess             = RHI::AccessMask::None;
+            toTransfer.dstStages             = RHI::PipelineStageMask::Transfer;
+            toTransfer.dstAccess             = RHI::AccessMask::TransferWrite;
+            std::array        toTransferArr{toTransfer};
+            RHI::BarrierGroup prep{};
+            prep.textures = std::span<const RHI::TextureBarrier>{toTransferArr};
+            cmd.Barrier(prep);
 
-        for (std::size_t i = 0; i < mips.size(); ++i)
-        {
-            const auto&         m = mips[i];
-            RHI::TextureRegion  region{};
-            region.range.baseMipLevel    = m.mipLevel;
-            region.range.mipLevelCount   = 1;
-            region.range.baseArrayLayer  = m.arrayLayer;
-            region.range.arrayLayerCount = 1;
-            region.offset                = {};
-            region.extent.width          = m.width;
-            region.extent.height         = m.height;
-            region.extent.depth          = 1;
+            for (std::size_t i = 0; i < mipsCopy.size(); ++i)
+            {
+                const auto&        m = mipsCopy[i];
+                RHI::TextureRegion region{};
+                region.range.baseMipLevel    = m.mipLevel;
+                region.range.mipLevelCount   = 1;
+                region.range.baseArrayLayer  = m.arrayLayer;
+                region.range.arrayLayerCount = 1;
+                region.offset                = {};
+                region.extent.width          = m.width;
+                region.extent.height         = m.height;
+                region.extent.depth          = 1;
 
-            RHI::BufferTextureLayout layout{};
-            layout.offset     = mipOffsets[i];
-            layout.rowPitch   = 0;
-            layout.slicePitch = 0;
+                RHI::BufferTextureLayout layout{};
+                layout.offset     = mipOffsets[i];
+                layout.rowPitch   = 0;
+                layout.slicePitch = 0;
 
-            cmd->CopyBufferToTexture(&destination, region, staging.Get(), layout);
-        }
+                cmd.CopyBufferToTexture(dst, region, src, layout);
+            }
 
-        RHI::TextureBarrier toShader{};
-        toShader.texture               = &destination;
-        toShader.range                 = toTransfer.range;
-        toShader.oldLayout             = RHI::ImageLayout::TransferDst;
-        toShader.newLayout             = RHI::ImageLayout::ShaderReadOnly;
-        toShader.srcStages             = RHI::PipelineStageMask::Transfer;
-        toShader.srcAccess             = RHI::AccessMask::TransferWrite;
-        toShader.dstStages             = RHI::PipelineStageMask::AllCommands;
-        toShader.dstAccess             = RHI::AccessMask::ShaderResourceRead;
-        std::array              toShaderArr{toShader};
-        RHI::BarrierGroup       finish{};
-        finish.textures = std::span<const RHI::TextureBarrier>{toShaderArr};
-        cmd->Barrier(finish);
-
-        return EndAndWait(*cmd);
+            RHI::TextureBarrier toShader{};
+            toShader.texture   = dst;
+            toShader.range     = toTransfer.range;
+            toShader.oldLayout = RHI::ImageLayout::TransferDst;
+            toShader.newLayout = RHI::ImageLayout::ShaderReadOnly;
+            toShader.srcStages = RHI::PipelineStageMask::Transfer;
+            toShader.srcAccess = RHI::AccessMask::TransferWrite;
+            toShader.dstStages = RHI::PipelineStageMask::AllCommands;
+            toShader.dstAccess = RHI::AccessMask::ShaderResourceRead;
+            std::array        toShaderArr{toShader};
+            RHI::BarrierGroup finish{};
+            finish.textures = std::span<const RHI::TextureBarrier>{toShaderArr};
+            cmd.Barrier(finish);
+        };
+        Enqueue(std::move(job));
+        return future;
     }
 
 private:
+    struct UploadJob
+    {
+        std::function<void(RHI::IRHICommandList&)> record;
+        Promise<bool>                              promise;
+        CancellationToken                          token;
+        std::vector<Ref<RHI::IRHIBuffer>>          bufferRefs;
+        std::vector<Ref<RHI::IRHITexture>>         textureRefs;
+    };
+
+    void Enqueue(UploadJob job)
+    {
+        {
+            std::lock_guard lock(jobsMutex_);
+            jobs_.push_back(std::move(job));
+        }
+        jobsCv_.notify_one();
+    }
+
+    void WorkerLoop()
+    {
+        while (true)
+        {
+            UploadJob job;
+            {
+                std::unique_lock lock(jobsMutex_);
+                jobsCv_.wait(lock, [this] {
+                    return stop_.load(std::memory_order_acquire) || !jobs_.empty();
+                });
+                if (jobs_.empty() && stop_.load(std::memory_order_acquire))
+                {
+                    return;
+                }
+                job = std::move(jobs_.front());
+                jobs_.pop_front();
+            }
+            RunJob(std::move(job));
+        }
+    }
+
+    void RunJob(UploadJob job)
+    {
+        if (job.token.IsCanceled())
+        {
+            job.promise.Set(false);
+            return;
+        }
+        if (!pool_)
+        {
+            job.promise.Set(false);
+            return;
+        }
+        Ref<RHI::IRHICommandList> cmd = pool_->AllocateCommandList();
+        if (!cmd || !cmd->Begin())
+        {
+            HYLUX_LOG_ERROR(LogAsset, "AssetUploader: command list begin failed");
+            job.promise.Set(false);
+            return;
+        }
+        job.record(*cmd);
+        cmd->End();
+
+        ++fenceValue_;
+        RHI::FenceSignalDesc signal{};
+        signal.fence     = fence_.Get();
+        signal.value     = fenceValue_;
+        signal.stageMask = RHI::PipelineStageMask::AllCommands;
+
+        std::array      cmdArr{cmd.Get()};
+        RHI::SubmitDesc submit{};
+        submit.commandLists = std::span<RHI::IRHICommandList* const>{cmdArr};
+        submit.signals      = std::span<const RHI::FenceSignalDesc>{&signal, 1};
+
+        std::array submits{submit};
+        if (!queue_->Submit(std::span<const RHI::SubmitDesc>{submits}))
+        {
+            HYLUX_LOG_ERROR(LogAsset, "AssetUploader: queue submit failed");
+            job.promise.Set(false);
+            return;
+        }
+        job.promise.Set(fence_->Wait(fenceValue_));
+    }
+
+    void DrainPendingAsFailed()
+    {
+        std::deque<UploadJob> leftover;
+        {
+            std::lock_guard lock(jobsMutex_);
+            leftover.swap(jobs_);
+        }
+        for (auto& job : leftover)
+        {
+            job.promise.Set(false);
+        }
+    }
+
     Ref<RHI::IRHIBuffer> AllocateStaging(std::uint64_t size)
     {
         if (device_ == nullptr)
@@ -214,55 +386,17 @@ private:
         return true;
     }
 
-    bool BeginOneShot(Ref<RHI::IRHICommandList>& outCmd)
-    {
-        if (!pool_)
-        {
-            return false;
-        }
-        outCmd = pool_->AllocateCommandList();
-        if (!outCmd)
-        {
-            HYLUX_LOG_ERROR(LogAsset, "AssetUploader: AllocateCommandList failed");
-            return false;
-        }
-        if (!outCmd->Begin())
-        {
-            HYLUX_LOG_ERROR(LogAsset, "AssetUploader: command list Begin failed");
-            return false;
-        }
-        return true;
-    }
-
-    bool EndAndWait(RHI::IRHICommandList& cmd)
-    {
-        cmd.End();
-
-        ++fenceValue_;
-        RHI::FenceSignalDesc signal{};
-        signal.fence     = fence_.Get();
-        signal.value     = fenceValue_;
-        signal.stageMask = RHI::PipelineStageMask::AllCommands;
-
-        std::array       cmdArr{&cmd};
-        RHI::SubmitDesc  submit{};
-        submit.commandLists = std::span<RHI::IRHICommandList* const>{cmdArr};
-        submit.signals      = std::span<const RHI::FenceSignalDesc>{&signal, 1};
-
-        std::array submits{submit};
-        if (!queue_->Submit(std::span<const RHI::SubmitDesc>{submits}))
-        {
-            HYLUX_LOG_ERROR(LogAsset, "AssetUploader: queue submit failed");
-            return false;
-        }
-        return fence_->Wait(fenceValue_);
-    }
-
     RHI::IRHIDevice*          device_;
     Ref<RHI::IRHIQueue>       queue_;
     Ref<RHI::IRHICommandPool> pool_;
     Ref<RHI::IRHIFence>       fence_;
     std::uint64_t             fenceValue_{0};
+
+    std::mutex              jobsMutex_;
+    std::condition_variable jobsCv_;
+    std::deque<UploadJob>   jobs_;
+    std::atomic<bool>       stop_{false};
+    std::thread             worker_;
 };
 
 } // namespace
@@ -332,7 +466,13 @@ void AssetSubsystem::Initialize(Engine& engine)
                    registry_.Size(), counts.mesh, counts.material, counts.materialInstance, counts.texture,
                    counts.unknown);
 
+    engine.RegisterTickable(this);
     initialized_ = true;
+}
+
+void AssetSubsystem::Tick(float /*deltaSeconds*/)
+{
+    tickExecutor_.Drain();
 }
 
 void AssetSubsystem::Shutdown()
@@ -343,9 +483,21 @@ void AssetSubsystem::Shutdown()
     }
     HYLUX_LOG_INFO(LogAsset, "AssetSubsystem: shutting down ({} cached, {} bytes)",
                    lru_.Size(), lru_.BytesInUse());
-    lru_.Clear();
-    registry_.Clear();
+
+    if (engine_ != nullptr)
+    {
+        engine_->UnregisterTickable(this);
+    }
+
     uploader_.reset();
+    tickExecutor_.Drain();
+
+    {
+        std::lock_guard lock(stateMutex_);
+        inflight_.clear();
+        lru_.Clear();
+    }
+    registry_.Clear();
     device_      = nullptr;
     renderer_    = nullptr;
     shaders_     = nullptr;
@@ -357,6 +509,7 @@ void AssetSubsystem::Shutdown()
 
 void AssetSubsystem::UnloadAll()
 {
+    std::lock_guard lock(stateMutex_);
     lru_.Clear();
 }
 
@@ -373,32 +526,64 @@ Future<Ref<AssetBase>> AssetSubsystem::LoadGenericByPath(std::string_view virtua
 
 Future<Ref<AssetBase>> AssetSubsystem::LoadGenericByGuid(Guid guid)
 {
-    if (Ref<AssetBase> cached = lru_.Get(guid))
+    Promise<Ref<AssetBase>> ownedPromise;
+    Future<Ref<AssetBase>>  ownedFuture = ownedPromise.GetFuture();
     {
-        return Future<Ref<AssetBase>>::MakeReady(std::move(cached));
+        std::lock_guard lock(stateMutex_);
+        if (Ref<AssetBase> cached = lru_.Get(guid))
+        {
+            return Future<Ref<AssetBase>>::MakeReady(std::move(cached));
+        }
+        if (auto it = inflight_.find(guid); it != inflight_.end())
+        {
+            return it->second;
+        }
+        inflight_.emplace(guid, ownedFuture);
     }
+
     auto entry = registry_.Find(guid);
     if (!entry.has_value())
     {
         HYLUX_LOG_WARN(LogAsset, "AssetSubsystem: GUID {} not in registry", guid.ToString());
-        return Future<Ref<AssetBase>>::MakeFailed();
+        {
+            std::lock_guard lock(stateMutex_);
+            inflight_.erase(guid);
+        }
+        ownedPromise.Set(Ref<AssetBase>{});
+        return ownedFuture;
     }
-    Ref<AssetBase> built = ParseAndConstruct(*entry);
-    if (!built)
+
+    Future<Ref<AssetBase>> inner = ParseAndConstruct(*entry);
+    if (!inner.IsValid())
     {
-        return Future<Ref<AssetBase>>::MakeFailed();
+        {
+            std::lock_guard lock(stateMutex_);
+            inflight_.erase(guid);
+        }
+        ownedPromise.Set(Ref<AssetBase>{});
+        return ownedFuture;
     }
-    const std::uint64_t footprint = built->GetMemoryFootprint();
-    lru_.Insert(guid, built, footprint);
-    return Future<Ref<AssetBase>>::MakeReady(std::move(built));
+
+    inner.Then([this, guid, ownedPromise](Ref<AssetBase>& asset) mutable {
+        {
+            std::lock_guard lock(stateMutex_);
+            if (asset)
+            {
+                lru_.Insert(guid, asset, asset->GetMemoryFootprint());
+            }
+            inflight_.erase(guid);
+        }
+        ownedPromise.Set(asset);
+    });
+    return ownedFuture;
 }
 
-Ref<AssetBase> AssetSubsystem::ParseAndConstruct(const RegistryEntry& entry)
+Future<Ref<AssetBase>> AssetSubsystem::ParseAndConstruct(const RegistryEntry& entry)
 {
     auto reader = Cooked::CookedReader::Open(*vfs_, entry.path);
     if (!reader.has_value())
     {
-        return {};
+        return Future<Ref<AssetBase>>::MakeFailed();
     }
 
     AssetLoaderContext ctx{};
@@ -412,29 +597,21 @@ Ref<AssetBase> AssetSubsystem::ParseAndConstruct(const RegistryEntry& entry)
     switch (entry.type)
     {
         case AssetTypeId::Mesh:
-        {
-            Ref<MeshAsset> mesh = MeshLoader::Load(*reader, ctx);
-            return Ref<AssetBase>(mesh.Get());
-        }
+            return MeshLoader::Load(*reader, ctx).Transform<Ref<AssetBase>>(
+                [](Ref<MeshAsset>& m) -> Ref<AssetBase> { return Ref<AssetBase>(m.Get()); });
         case AssetTypeId::Material:
-        {
-            Ref<MaterialAsset> mat = MaterialLoader::Load(*reader, ctx);
-            return Ref<AssetBase>(mat.Get());
-        }
+            return MaterialLoader::Load(*reader, ctx).Transform<Ref<AssetBase>>(
+                [](Ref<MaterialAsset>& m) -> Ref<AssetBase> { return Ref<AssetBase>(m.Get()); });
         case AssetTypeId::MaterialInstance:
-        {
-            Ref<MaterialInstanceAsset> mi = MaterialInstanceLoader::Load(*reader, ctx);
-            return Ref<AssetBase>(mi.Get());
-        }
+            return MaterialInstanceLoader::Load(*reader, ctx).Transform<Ref<AssetBase>>(
+                [](Ref<MaterialInstanceAsset>& m) -> Ref<AssetBase> { return Ref<AssetBase>(m.Get()); });
         case AssetTypeId::Texture:
-        {
-            Ref<TextureAsset> tex = TextureLoader::Load(*reader, ctx);
-            return Ref<AssetBase>(tex.Get());
-        }
+            return TextureLoader::Load(*reader, ctx).Transform<Ref<AssetBase>>(
+                [](Ref<TextureAsset>& t) -> Ref<AssetBase> { return Ref<AssetBase>(t.Get()); });
         case AssetTypeId::Unknown:
         default:
             HYLUX_LOG_WARN(LogAsset, "AssetSubsystem: unknown type tag for '{}'", entry.path);
-            return {};
+            return Future<Ref<AssetBase>>::MakeFailed();
     }
 }
 

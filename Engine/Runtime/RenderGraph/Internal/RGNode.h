@@ -10,9 +10,11 @@
 #include "RHI/RHIBarriers.h"
 #include "RHI/RHIEnums.h"
 #include "RHI/RHIPipelineDesc.h"
+#include "RHI/RHIRenderPassAttachments.h"
 #include "RHI/RHIResourceDesc.h"
 #include "RHI/RHITypes.h"
 #include "RenderGraph/RGAccess.h"
+#include "RenderGraph/RGPass.h"
 
 #include <cstdint>
 #include <memory_resource>
@@ -134,9 +136,19 @@ struct RGPassNode
 
     std::string                               name;
     RGPass*                                   pass{nullptr};
+    RGPassKind                                kind{RGPassKind::Generic};
+    QueueAffinity                             queueAffinity{QueueAffinity::Graphics};
     bool                                      isRaster{false};
     bool                                      isSideEffect{false};
     bool                                      isAlive{true};
+
+    /// @brief Subpass-merge hint computed during Compile. When true, this raster pass would
+    ///        prefer to share its render-pass instance with the previous compiled pass so the
+    ///        backend can keep attachments in tile memory between them. The current executor
+    ///        does not yet act on this — barrier planning and dynamic-rendering wrap-up still
+    ///        treat every raster pass as a standalone render pass. Reserved so the eventual
+    ///        merger can plug in without touching the public RGRasterBuilder surface.
+    bool                                      mergeWithPrevious{false};
 
     std::pmr::vector<RGTextureAccessRecord>   textureAccesses;
     std::pmr::vector<RGBufferAccessRecord>    bufferAccesses;
@@ -148,6 +160,19 @@ struct RGPassNode
 
     std::pmr::vector<RHI::TextureBarrier>     preludeTextureBarriers;
     std::pmr::vector<RHI::BufferBarrier>      preludeBufferBarriers;
+};
+
+/// @brief Compile-time grouping of consecutive raster passes that share a renderpass
+///        instance. Produced by RenderGraph::ComputeRenderPassBatches and consumed by both
+///        the serial and parallel Execute paths so neither has to re-derive batching.
+///        firstExecIndex / count index into RenderGraph::executionOrder_. A batch with
+///        count == 1 is the trivial case (one pass, its own renderpass instance); count > 1
+///        means every member raster pass shares the same RHIRenderPassAttachments.
+struct RGRenderPassBatch
+{
+    std::uint32_t                  firstExecIndex{0};
+    std::uint32_t                  count{0};
+    RHI::RHIRenderPassAttachments  attachments{};
 };
 
 } // namespace Internal

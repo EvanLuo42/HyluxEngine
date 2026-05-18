@@ -108,7 +108,11 @@ static_assert(sizeof(MipEntry) == 8);
 
 /// @brief MeshAsset payload. typeTag = AssetTypeId::Mesh. Followed in the file by the
 ///        vertex-layout array, the submesh array, the vertex bytes, and the index bytes;
-///        all referenced by file-relative offsets here.
+///        all referenced by file-relative offsets here. `kind` is the MeshAssetKind
+///        discriminator (0 = physical VB/IB mesh, 1 = virtual clustered mesh); physical
+///        payloads use the vertex/index/submesh/layout offsets below, virtual payloads
+///        ignore them and append their own cluster/page/LOD-DAG tables after the fixed
+///        header instead.
 #pragma pack(push, 1)
 
 struct MeshPayload
@@ -118,7 +122,8 @@ struct MeshPayload
     std::uint32_t vertexStride;
     std::uint32_t vertexCount;
     std::uint8_t  indexFormat;
-    std::uint8_t  pad0[3];
+    std::uint8_t  kind;
+    std::uint8_t  pad0[2];
     std::uint32_t indexCount;
     std::uint32_t vertexLayoutOffset;
     std::uint32_t vertexLayoutCount;
@@ -169,6 +174,11 @@ static_assert(sizeof(MaterialInstancePayload) == 16);
 /// @brief TextureAsset payload. typeTag = AssetTypeId::Texture. Followed in the file by
 ///        the MipEntry array at `mipTableOffset` and the raw pixel bytes starting at
 ///        `pixelDataOffset` (mips packed contiguously, indexed via MipEntry offsets).
+///        `kind` is the TextureAssetKind discriminator (0 = fully-resident physical
+///        texture, 1 = software virtual texture, 2 = hardware sparse texture); physical
+///        payloads use the mip table below; virtual payloads append page-table / tile-
+///        pool descriptors after the fixed header; sparse payloads append a tile-data
+///        section laid out in the format's native tile shape.
 #pragma pack(push, 1)
 
 struct TexturePayload
@@ -176,7 +186,7 @@ struct TexturePayload
     std::uint8_t  dimension;
     std::uint8_t  samplerHintFilter;
     std::uint8_t  samplerHintAddress;
-    std::uint8_t  pad0;
+    std::uint8_t  kind;
     std::uint32_t format;
     std::uint32_t width;
     std::uint32_t height;

@@ -3,6 +3,7 @@
 
 #include "Renderer/Thread/RenderThread.h"
 
+#include "Core/Concurrency/ThreadAffinity.h"
 #include "Core/Logging/CoreLogCategories.h"
 #include "Core/Logging/Logger.h"
 #include "RHI/Capture/IGraphicsCaptureTool.h"
@@ -83,6 +84,8 @@ RendererStats RenderThread::SnapshotStats() const
 
 void RenderThread::Run()
 {
+    Concurrency::RegisterCurrentThreadRole(Concurrency::ThreadRole::RenderThread);
+
     commandPool_ =
         deps_.device->CreateCommandPool(RHI::QueueType::Graphics, RHI::CommandPoolFlagBits::AllowIndividualReset);
     if (!commandPool_)

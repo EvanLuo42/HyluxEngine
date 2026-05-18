@@ -73,6 +73,7 @@ enum class AccessMask : std::uint64_t
     Present                       = 1ull << 17,
     MemoryRead                    = 1ull << 18,
     MemoryWrite                   = 1ull << 19,
+    InputAttachmentRead           = 1ull << 20,
 };
 
 HYLUX_ENABLE_BITFLAGS(AccessMask)

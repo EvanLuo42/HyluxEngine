@@ -97,7 +97,7 @@ void EditorApp::RegisterEditorSubsystems()
     engine_.RegisterSubsystem<Renderer::RenderSubsystem>(std::move(rendererConfig));
 }
 
-void EditorApp::RegisterBuiltinMenus()
+void EditorApp::RegisterBuiltinMenus() const
 {
     using Editor::MenuActionDesc;
     menuRegistry_->Register(MenuActionDesc{

@@ -15,21 +15,21 @@
 namespace Hylux::Asset
 {
 
-Ref<MaterialAsset> MaterialLoader::Load(const Cooked::CookedReader& reader,
-                                        const AssetLoaderContext&    ctx)
+Future<Ref<MaterialAsset>> MaterialLoader::Load(const Cooked::CookedReader& reader,
+                                                const AssetLoaderContext&    ctx)
 {
     if (reader.TypeTag() != AssetTypeId::Material)
     {
         HYLUX_LOG_ERROR(LogAsset, "MaterialLoader: wrong type tag {}",
                         static_cast<int>(reader.TypeTag()));
-        return {};
+        return Future<Ref<MaterialAsset>>::MakeFailed();
     }
 
     const auto* payload = reader.PayloadAs<Cooked::MaterialPayload>();
     if (payload == nullptr)
     {
         HYLUX_LOG_ERROR(LogAsset, "MaterialLoader: payload missing");
-        return {};
+        return Future<Ref<MaterialAsset>>::MakeFailed();
     }
 
     MaterialAsset::InitData init{};
@@ -69,7 +69,8 @@ Ref<MaterialAsset> MaterialLoader::Load(const Cooked::CookedReader& reader,
     }
 
     AssetId id{reader.GuidValue(), {}};
-    return MakeRef<MaterialAsset>(std::move(id), std::move(init));
+    Ref<MaterialAsset> asset = MakeRef<MaterialAsset>(std::move(id), std::move(init));
+    return Future<Ref<MaterialAsset>>::MakeReady(std::move(asset));
 }
 
 } // namespace Hylux::Asset

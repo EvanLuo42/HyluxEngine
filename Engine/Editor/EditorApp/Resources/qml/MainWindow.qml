@@ -1,4 +1,5 @@
 import QtQuick
+import QtQml
 import QtQuick.Controls
 import com.kdab.dockwidgets as KDDW
 
@@ -16,19 +17,26 @@ ApplicationWindow {
     title: qsTr("Hylux Editor")
 
     menuBar: MenuBar {
-        Repeater {
+        id: dynamicMenuBar
+        Instantiator {
             model: menuRegistry.topLevelMenus()
             delegate: Menu {
+                id: topMenu
                 title: modelData.title
-                Repeater {
-                    model: menuRegistry.itemsAt(modelData.fullPath)
+                property string menuPath: modelData.fullPath
+                Instantiator {
+                    model: menuRegistry.itemsAt(topMenu.menuPath)
                     delegate: MenuItem {
                         text: modelData.title
                         enabled: modelData.isEnabled
                         onTriggered: menuRegistry.trigger(modelData.fullPath)
                     }
+                    onObjectAdded: (index, object) => topMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => topMenu.removeItem(object)
                 }
             }
+            onObjectAdded: (index, object) => dynamicMenuBar.insertMenu(index, object)
+            onObjectRemoved: (index, object) => dynamicMenuBar.removeMenu(object)
         }
     }
 
